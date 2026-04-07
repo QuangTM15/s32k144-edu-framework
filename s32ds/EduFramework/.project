@@ -23,4 +23,11 @@
 		<nature>org.eclipse.cdt.managedbuilder.core.managedBuildNature</nature>
 		<nature>org.eclipse.cdt.managedbuilder.core.ScannerConfigNature</nature>
 	</natures>
+	<linkedResources>
+		<link>
+			<name>firmware</name>
+			<type>2</type>
+			<location>D:/S32K144_MaaZEDU_Framework/firmware</location>
+		</link>
+	</linkedResources>
 </projectDescription>
