@@ -29,5 +29,10 @@
 			<type>2</type>
 			<location>D:/S32K144_MaaZEDU_Framework/firmware</location>
 		</link>
+		<link>
+			<name>tests</name>
+			<type>2</type>
+			<location>D:/S32K144_MaaZEDU_Framework/tests</location>
+		</link>
 	</linkedResources>
 </projectDescription>
