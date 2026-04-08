@@ -5,6 +5,9 @@
 
 /* =========================================
  * LEDs
+ * NOTE:
+ * Use real hardware-tested LED mapping.
+ * Do NOT trust MaaZEDU document for LED colors.
  * ========================================= */
 #define BOARD_LED_RED_PORT      IP_PORTD
 #define BOARD_LED_RED_GPIO      IP_PTD
@@ -101,5 +104,48 @@
 #define BOARD_GPIO9_PORT        IP_PORTD
 #define BOARD_GPIO9_GPIO        IP_PTD
 #define BOARD_GPIO9_PIN         5U
+
+/* =========================================
+ * UART
+ * ========================================= */
+/* UART1 -> J-Link USB / debug serial */
+#define BOARD_UART1_RX_PORT     IP_PORTC
+#define BOARD_UART1_RX_GPIO     IP_PTC
+#define BOARD_UART1_RX_PIN      6U
+
+#define BOARD_UART1_TX_PORT     IP_PORTC
+#define BOARD_UART1_TX_GPIO     IP_PTC
+#define BOARD_UART1_TX_PIN      7U
+
+/* UART2 -> external header */
+#define BOARD_UART2_RX_PORT     IP_PORTD
+#define BOARD_UART2_RX_GPIO     IP_PTD
+#define BOARD_UART2_RX_PIN      6U
+
+#define BOARD_UART2_TX_PORT     IP_PORTD
+#define BOARD_UART2_TX_GPIO     IP_PTD
+#define BOARD_UART2_TX_PIN      7U
+
+/* =========================================
+ * I2C
+ * ========================================= */
+#define BOARD_I2C0_SCL_PORT     IP_PORTA
+#define BOARD_I2C0_SCL_GPIO     IP_PTA
+#define BOARD_I2C0_SCL_PIN      3U
+
+#define BOARD_I2C0_SDA_PORT     IP_PORTA
+#define BOARD_I2C0_SDA_GPIO     IP_PTA
+#define BOARD_I2C0_SDA_PIN      2U
+
+/* =========================================
+ * ADC
+ * ========================================= */
+#define BOARD_ADC0_SE12_PORT    IP_PORTC
+#define BOARD_ADC0_SE12_GPIO    IP_PTC
+#define BOARD_ADC0_SE12_PIN     14U
+
+#define BOARD_ADC0_SE13_PORT    IP_PORTC
+#define BOARD_ADC0_SE13_GPIO    IP_PTC
+#define BOARD_ADC0_SE13_PIN     15U
 
 #endif /* BOARD_PINS_H */
