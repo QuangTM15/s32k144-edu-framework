@@ -2,6 +2,7 @@
 #include "port.h"
 #include "gpio.h"
 #include "clock.h"
+#include "lpit.h"
 
 #define LED_PORT    IP_PORTD
 #define LED_GPIO    IP_PTD
@@ -23,16 +24,25 @@ int main(void)
 
     Board_InitLed();
 
+    /* Clock test baseline */
     SOSC_init_8MHz();
     SPLL_init_160MHz();
     NormalRUNmode_80MHz();
 
+    /* Step 1: test only LPIT_Init() */
+    LPIT_Init();
+
+    LPIT_SetTimerPeriod(0U, 40000000U);
+
+
+    LPIT_StartTimer(0U);
+
     while (1)
     {
-        GPIO_TogglePin(LED_GPIO, LED_PIN);
-
-        for (delay = 0U; delay < 500000U; delay++)
+        if (LPIT_GetFlag(0U) != 0U)
         {
+            LPIT_ClearFlag(0U);
+            GPIO_TogglePin(LED_GPIO, LED_PIN);
         }
     }
 }
