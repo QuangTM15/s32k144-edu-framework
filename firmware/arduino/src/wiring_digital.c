@@ -1,5 +1,6 @@
 #include "wiring_digital.h"
 #include "arduino_pins.h"
+#include "arduino_defs.h"
 
 /* Driver layer */
 #include "port.h"

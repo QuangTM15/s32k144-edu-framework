@@ -1,7 +1,5 @@
-#include <stdbool.h>
-#include "wiring_digital.h"
+#include "Arduino.h"
 #include "full_led.h"
-#include "arduino_pins.h"
 
 static void FullLed_UpdateState(unsigned int step)
 {
@@ -40,6 +38,7 @@ static void FullLed_UpdateState(unsigned int step)
 
 void Demo_FullLed(void)
 {
+    setup();
     bool lastBtn0 = true;
     unsigned int step = 4U; /* start with all OFF */
 

@@ -1,17 +1,16 @@
-#include <stdbool.h>
-#include "wiring_digital.h"
+#include "Arduino.h"
 #include "demo_btn_led.h"
-#include "arduino_pins.h"
 
 void Demo_ButtonLed(void)
 {
+    setup();
+    
     bool lastBtn0 = true;
     bool lastBtn1 = true;
     bool redState = false;
 
     pinMode(BTN0, INPUT_PULLUP);
     pinMode(BTN1, INPUT_PULLUP);
-
     pinMode(LED_BLUE, OUTPUT);    
 
     digitalWrite(LED_BLUE, LOW);

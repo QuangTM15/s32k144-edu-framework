@@ -5,7 +5,7 @@
 
 typedef void (*time_callback_t)(void);
 
-void Time_Init(void);
+/* Public API */
 uint32_t millis(void);
 void delay(uint32_t ms);
 void Time_SetCallback(time_callback_t cb);
