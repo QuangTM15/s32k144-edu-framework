@@ -12,8 +12,7 @@ void Demo_ButtonLed(void)
     pinMode(BTN0, INPUT_PULLUP);
     pinMode(BTN1, INPUT_PULLUP);
 
-    pinMode(LED_BLUE, OUTPUT);
-    pinMode(LED_RED, OUTPUT);
+    pinMode(LED_BLUE, OUTPUT);    
 
     digitalWrite(LED_BLUE, LOW);
     digitalWrite(LED_RED, LOW);
