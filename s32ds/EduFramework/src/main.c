@@ -3,6 +3,7 @@
 #include "gpio.h"
 #include "clock.h"
 #include "lpit.h"
+#include "irq.h"
 
 #define LED_PORT    IP_PORTD
 #define LED_GPIO    IP_PTD
@@ -20,29 +21,21 @@ static void Board_InitLed(void)
 
 int main(void)
 {
-    volatile uint32_t delay;
-
     Board_InitLed();
 
-    /* Clock test baseline */
     SOSC_init_8MHz();
     SPLL_init_160MHz();
     NormalRUNmode_80MHz();
 
-    /* Step 1: test only LPIT_Init() */
     LPIT_Init();
-
     LPIT_SetTimerPeriod(0U, 40000000U);
 
+    LPIT_EnableInterrupt(0U);
+    IRQ_LPIT0_Ch0_Init();
 
     LPIT_StartTimer(0U);
 
     while (1)
     {
-        if (LPIT_GetFlag(0U) != 0U)
-        {
-            LPIT_ClearFlag(0U);
-            GPIO_TogglePin(LED_GPIO, LED_PIN);
-        }
     }
 }

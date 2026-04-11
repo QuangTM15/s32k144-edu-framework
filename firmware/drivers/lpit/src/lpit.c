@@ -94,3 +94,23 @@ void LPIT_ClearFlag(uint8_t channel)
     /* MSR is write-1-to-clear */
     IP_LPIT0->MSR = (1UL << channel);
 }
+
+void LPIT_EnableInterrupt(uint8_t channel)
+{
+    if (LPIT_IsValidChannel(channel) == 0U)
+    {
+        return;
+    }
+
+    IP_LPIT0->MIER |= (1UL << channel);
+}
+
+void LPIT_DisableInterrupt(uint8_t channel)
+{
+    if (LPIT_IsValidChannel(channel) == 0U)
+    {
+        return;
+    }
+
+    IP_LPIT0->MIER &= ~(1UL << channel);
+}
