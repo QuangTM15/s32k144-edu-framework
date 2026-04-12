@@ -3,23 +3,6 @@
 
 #include <stdint.h>
 
-/*
- * ============================================================
- * IRQ Driver - EduFramework
- *
- * This module:
- *  - Configures NVIC
- *  - Provides ISR entry points
- *
- * NOTE:
- *  - Peripheral logic is NOT handled here
- *  - ISR must call driver layer (e.g. LPUART_IRQHandler)
- * ============================================================
- */
-
-/* ============================================================
- * LPIT
- * ============================================================ */
 
 typedef void (*irq_callback_t)(void);
 

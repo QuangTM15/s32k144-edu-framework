@@ -3,22 +3,14 @@
 #include "lpuart.h"
 #include "irq.h"
 
-/*
- * ============================================================
- * Main Application - UART Interrupt Test
- *
- * Flow:
- *  - Init clock
- *  - Init UART1
- *  - Enable interrupt
- *  - Poll driver for received data
- * ============================================================
- */
+#define APP_RX_LINE_BUFFER_SIZE    (64U)
 
 int main(void)
 {
     LPUART_Config_t uart1Config;
     char ch;
+    char rxLine[APP_RX_LINE_BUFFER_SIZE];
+    uint32_t rxIndex = 0U;
 
     /* ============================================================
      * System Clock Initialization
@@ -37,12 +29,12 @@ int main(void)
     {
         while (1)
         {
-            /* Initialization failed */
+            /* UART init failed */
         }
     }
 
     /* ============================================================
-     * Enable UART1 Interrupt
+     * Enable UART1 RX Interrupt
      * ============================================================ */
     IRQ_LPUART1_RxTx_Init();
     LPUART_EnableRxInterrupt(IP_LPUART1);
@@ -50,22 +42,53 @@ int main(void)
     /* ============================================================
      * Welcome Message
      * ============================================================ */
-    LPUART_WriteString(IP_LPUART1, "\r\n=== UART1 INTERRUPT TEST ===\r\n");
-    LPUART_WriteString(IP_LPUART1, "Type any key...\r\n");
+    LPUART_WriteString(IP_LPUART1, "\r\n=== UART1 STRING ECHO TEST ===\r\n");
+    LPUART_WriteString(IP_LPUART1, "Type a line and press Enter:\r\n");
 
     /* ============================================================
      * Main Loop
      * ============================================================ */
     while (1)
     {
-        /* Check if new data is available (from interrupt) */
-        if (LPUART_IsDataAvailable(IP_LPUART1))
+        while (LPUART_IsDataAvailable(IP_LPUART1))
         {
             ch = LPUART_GetChar(IP_LPUART1);
 
-            /* Echo back */
-            LPUART_WriteString(IP_LPUART1, "\r\nInterrupt received: ");
-            LPUART_WriteChar(IP_LPUART1, ch);
+            /* Ignore '\r', use '\n' as end of line */
+            if (ch == '\r')
+            {
+                continue;
+            }
+
+            if (ch == '\n')
+            {
+                rxLine[rxIndex] = '\0';
+
+                LPUART_WriteString(IP_LPUART1, "\r\nEcho string: ");
+                LPUART_WriteString(IP_LPUART1, rxLine);
+                LPUART_WriteString(IP_LPUART1, "\r\n");
+
+                rxIndex = 0U;
+            }
+            else
+            {
+                if (rxIndex < (APP_RX_LINE_BUFFER_SIZE - 1U))
+                {
+                    rxLine[rxIndex] = ch;
+                    rxIndex++;
+                }
+                else
+                {
+                    /* Buffer full: terminate current string and report */
+                    rxLine[rxIndex] = '\0';
+
+                    LPUART_WriteString(IP_LPUART1, "\r\nBuffer full: ");
+                    LPUART_WriteString(IP_LPUART1, rxLine);
+                    LPUART_WriteString(IP_LPUART1, "\r\n");
+
+                    rxIndex = 0U;
+                }
+            }
         }
     }
 }
