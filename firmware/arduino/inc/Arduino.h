@@ -9,6 +9,7 @@
 #include "arduino_defs.h"
 #include "wiring_digital.h"
 #include "time.h"
+#include "hardware_serial.h"
 
 void setup(void);
 
