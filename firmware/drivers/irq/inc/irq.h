@@ -24,4 +24,6 @@ void LPIT0_Ch0_IRQHandler(void);
 void LPUART1_RxTx_IRQHandler(void);
 void LPUART2_RxTx_IRQHandler(void);
 
+void IRQ_ADC0_Init(void);
+void ADC0_IRQHandler(void);
 #endif /* IRQ_H */

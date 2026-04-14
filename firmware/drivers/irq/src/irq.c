@@ -2,6 +2,7 @@
 #include "irq.h"
 #include "lpit.h"
 #include "lpuart.h"
+#include "adc.h"
 
 /* ============================================================
  * IRQ numbers (from RM / NVIC table)
@@ -15,6 +16,10 @@
 
 #define LPUART2_RXTX_IRQ_NUMBER     (35U)
 #define LPUART2_RXTX_PRIORITY       (10U)
+
+#define ADC0_IRQ_NUMBER      (39U)
+#define ADC0_IRQ_PRIORITY    (0xA0U)
+
 
 /* ============================================================
  * NVIC registers
@@ -100,4 +105,20 @@ void LPUART2_RxTx_IRQHandler(void)
 {
     /* Delegate to driver */
     LPUART_IRQHandler(IP_LPUART2);
+}
+
+void IRQ_ADC0_Init(void)
+{
+    NVIC_ICPR_BASE[ADC0_IRQ_NUMBER / 32U] =
+        (1UL << (ADC0_IRQ_NUMBER % 32U));
+
+    NVIC_IPR_BASE[ADC0_IRQ_NUMBER] = ADC0_IRQ_PRIORITY;
+
+    NVIC_ISER_BASE[ADC0_IRQ_NUMBER / 32U] =
+        (1UL << (ADC0_IRQ_NUMBER % 32U));
+}
+
+void ADC0_IRQHandler(void)
+{
+    ADC_IRQHandler(IP_ADC_0);
 }
