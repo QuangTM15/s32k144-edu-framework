@@ -84,7 +84,26 @@ static void HardwareSerial_UintToString(uint32_t value, char *buffer)
     HardwareSerial_ReverseBuffer(buffer, index);
 }
 
-static void HardwareSerial_PrintNumberInternal(LPUART_Type *base, float number)
+static void HardwareSerial_PrintIntInternal(LPUART_Type *base, int value)
+{
+    char buffer[16];
+    uint32_t absValue;
+
+    if (value < 0)
+    {
+        HardwareSerial_PrintChar(base, '-');
+        absValue = (uint32_t)(-value);
+    }
+    else
+    {
+        absValue = (uint32_t)value;
+    }
+
+    HardwareSerial_UintToString(absValue, buffer);
+    HardwareSerial_PrintString(base, buffer);
+}
+
+static void HardwareSerial_PrintFloatInternal(LPUART_Type *base, float number)
 {
     char intBuffer[16];
     char fracBuffer[16];
@@ -215,14 +234,25 @@ void Serial1_println(const char *str)
     HardwareSerial_PrintlnString(IP_LPUART1, str);
 }
 
-void Serial1_printNumber(float number)
+void Serial1_printInt(int value)
 {
-    HardwareSerial_PrintNumberInternal(IP_LPUART1, number);
+    HardwareSerial_PrintIntInternal(IP_LPUART1, value);
 }
 
-void Serial1_printlnNumber(float number)
+void Serial1_printlnInt(int value)
 {
-    HardwareSerial_PrintNumberInternal(IP_LPUART1, number);
+    HardwareSerial_PrintIntInternal(IP_LPUART1, value);
+    LPUART_WriteString(IP_LPUART1, "\r\n");
+}
+
+void Serial1_printFloat(float value)
+{
+    HardwareSerial_PrintFloatInternal(IP_LPUART1, value);
+}
+
+void Serial1_printlnFloat(float value)
+{
+    HardwareSerial_PrintFloatInternal(IP_LPUART1, value);
     LPUART_WriteString(IP_LPUART1, "\r\n");
 }
 
@@ -274,13 +304,24 @@ void Serial2_println(const char *str)
     HardwareSerial_PrintlnString(IP_LPUART2, str);
 }
 
-void Serial2_printNumber(float number)
+void Serial2_printInt(int value)
 {
-    HardwareSerial_PrintNumberInternal(IP_LPUART2, number);
+    HardwareSerial_PrintIntInternal(IP_LPUART2, value);
 }
 
-void Serial2_printlnNumber(float number)
+void Serial2_printlnInt(int value)
 {
-    HardwareSerial_PrintNumberInternal(IP_LPUART2, number);
+    HardwareSerial_PrintIntInternal(IP_LPUART2, value);
+    LPUART_WriteString(IP_LPUART2, "\r\n");
+}
+
+void Serial2_printFloat(float value)
+{
+    HardwareSerial_PrintFloatInternal(IP_LPUART2, value);
+}
+
+void Serial2_printlnFloat(float value)
+{
+    HardwareSerial_PrintFloatInternal(IP_LPUART2, value);
     LPUART_WriteString(IP_LPUART2, "\r\n");
 }

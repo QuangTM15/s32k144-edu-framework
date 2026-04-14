@@ -10,6 +10,7 @@
 #include "wiring_digital.h"
 #include "time.h"
 #include "hardware_serial.h"
+#include "wiring_analog.h"
 
 void setup(void);
 

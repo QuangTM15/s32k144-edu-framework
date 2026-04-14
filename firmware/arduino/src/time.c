@@ -1,6 +1,5 @@
 #include "time.h"
 
-#include "clock.h"
 #include "lpit.h"
 #include "irq.h"
 
@@ -21,10 +20,6 @@ void Time_Init(void)
 {
     g_millis = 0U;
     g_timeCallback = (time_callback_t)0;
-
-    SOSC_init_8MHz();
-    SPLL_init_160MHz();
-    NormalRUNmode_80MHz();
 
     LPIT_Init();
     LPIT_SetTimerPeriod(0U, 40000U);   /* 1 ms tick with 40 MHz LPIT clock */

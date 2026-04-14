@@ -35,7 +35,7 @@ void Demo_UartLedCommand(void)
                 redState = (redState == 0.0f) ? 1.0f : 0.0f;
 
                 Serial1_print("RED: ");
-                Serial1_printlnNumber(redState);
+                Serial1_printlnFloat(redState);
             }
             else if ((ch == 'g') || (ch == 'G'))
             {
@@ -43,7 +43,7 @@ void Demo_UartLedCommand(void)
                 greenState = (greenState == 0.0f) ? 1.0f : 0.0f;
 
                 Serial1_print("GREEN: ");
-                Serial1_printlnNumber(greenState);
+                Serial1_printlnFloat(greenState);
             }
             else if ((ch == 'b') || (ch == 'B'))
             {
@@ -51,7 +51,7 @@ void Demo_UartLedCommand(void)
                 blueState = (blueState == 0.0f) ? 1.0f : 0.0f;
 
                 Serial1_print("BLUE: ");
-                Serial1_printlnNumber(blueState);
+                Serial1_printlnFloat(blueState);
             }
         }
     }
