@@ -22,7 +22,6 @@ char Serial1_read(void);
 uint32_t Serial1_readString(char *buffer, uint32_t maxLength);
 
 void Serial1_write(char ch);
-
 void Serial1_print(const char *str);
 void Serial1_println(const char *str);
 

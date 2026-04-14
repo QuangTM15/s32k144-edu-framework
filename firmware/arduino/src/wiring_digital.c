@@ -80,7 +80,8 @@ void pinMode(uint8_t pin, uint8_t mode)
     }
 
     /* Auto-enable passive filter for on-board buttons */
-    if (p->function == PIN_FUNC_BUTTON)
+    /* Auto-enable passive filter for on-board buttons */
+    if (p->role == PIN_ROLE_BUTTON)
     {
         PORT_SetPassiveFilter(p->portBase, p->pinNumber, true);
     }
