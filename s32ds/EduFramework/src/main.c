@@ -1,9 +1,9 @@
 #include "S32K144.h"
-#include "fade_led.h"
+#include "analog_full_demo.h"
 
 int main(void)
 {
-	Demo_FadeLed();
+	Demo_AnalogFull();
     while (1)
     {
     }
