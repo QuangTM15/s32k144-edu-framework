@@ -21,4 +21,6 @@ int analogGetResult(void);
 /* Blocking analog read in millivolts */
 int analogReadMilliVolts(uint8_t pin);
 
+void analogWrite(uint8_t pin, uint8_t value);
+
 #endif /* WIRING_ANALOG_H */

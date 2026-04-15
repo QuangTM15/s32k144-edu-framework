@@ -2,7 +2,10 @@
 #define ARDUINO_PINS_H
 
 #include "S32K144.h"
+#include "ftm.h"
+#include "port.h"
 #include <stdint.h>
+#include "board_pins.h"
 
 /* =========================================
  * User-visible pin names (match board labels)
@@ -84,9 +87,20 @@ typedef struct
 } ArduinoPinMap_t;
 
 /* =========================================
- * Global pin map table
+ * PWM-specific map type
+ * ========================================= */
+typedef struct
+{
+    FTM_Instance_t  instance;
+    FTM_Channel_t   channel;
+    port_mux_t      mux;
+} ArduinoPwmMap_t;
+
+/* =========================================
+ * Global pin map tables
  * ========================================= */
 extern const ArduinoPinMap_t g_arduinoPinMap[NUM_LOGICAL_PINS];
+extern const ArduinoPwmMap_t g_arduinoPwmMap[NUM_LOGICAL_PINS];
 
 /* =========================================
  * Validation macros
@@ -100,5 +114,7 @@ uint8_t Arduino_IsValidPin(uint8_t pin);
 uint8_t Arduino_HasDigitalCapability(uint8_t pin);
 uint8_t Arduino_HasAnalogInputCapability(uint8_t pin);
 uint8_t Arduino_HasPwmCapability(uint8_t pin);
+
+uint8_t Arduino_GetPwmMap(uint8_t pin, ArduinoPwmMap_t *pwmMap);
 
 #endif /* ARDUINO_PINS_H */
