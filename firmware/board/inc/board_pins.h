@@ -44,23 +44,23 @@
 #define BOARD_CAN_RX_PIN        4U
 
 /* =========================================
- * SBC / LPSPI
+ LPSPI
  * ========================================= */
 #define BOARD_SBC_SCK_PORT      IP_PORTB
 #define BOARD_SBC_SCK_GPIO      IP_PTB
-#define BOARD_SBC_SCK_PIN       14U
+#define BOARD_SBC_SCK_PIN       2U
 
 #define BOARD_SBC_MISO_PORT     IP_PORTB
 #define BOARD_SBC_MISO_GPIO     IP_PTB
-#define BOARD_SBC_MISO_PIN      15U
+#define BOARD_SBC_MISO_PIN      3U
 
 #define BOARD_SBC_MOSI_PORT     IP_PORTB
 #define BOARD_SBC_MOSI_GPIO     IP_PTB
-#define BOARD_SBC_MOSI_PIN      16U
+#define BOARD_SBC_MOSI_PIN      1U
 
 #define BOARD_SBC_CS_PORT       IP_PORTB
 #define BOARD_SBC_CS_GPIO       IP_PTB
-#define BOARD_SBC_CS_PIN        17U
+#define BOARD_SBC_CS_PIN        0U
 
 /* =========================================
  * GPIO Header

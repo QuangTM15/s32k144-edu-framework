@@ -11,7 +11,7 @@
 #include "time.h"
 #include "hardware_serial.h"
 #include "wiring_analog.h"
-
+#include "spi.h"
 void setup(void);
 
 #endif /* ARDUINO_H */
