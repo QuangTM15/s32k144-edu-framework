@@ -9,6 +9,13 @@
 
 typedef enum
 {
+    LPSPI_STATUS_OK = 0,
+    LPSPI_STATUS_ERROR,
+    LPSPI_STATUS_INVALID_ARG
+} lpspi_status_t;
+
+typedef enum
+{
     LPSPI_MODE_MASTER = 0,
     LPSPI_MODE_SLAVE
 } lpspi_mode_t;
@@ -42,20 +49,29 @@ typedef struct
     uint32_t baudrate;   /* only used in master mode */
 } lpspi_config_t;
 
-void LPSPI_Init(const lpspi_config_t *config);
+/* Init / control */
+lpspi_status_t LPSPI_Init(const lpspi_config_t *config);
 void LPSPI_Enable(void);
 void LPSPI_Disable(void);
 
-uint8_t  LPSPI_Transfer8(uint8_t data);
-uint16_t LPSPI_Transfer16(uint16_t data);
+/* Runtime configuration */
+lpspi_status_t LPSPI_SetMode(lpspi_clock_mode_t mode);
+lpspi_status_t LPSPI_SetBitOrder(lpspi_bit_order_t bitOrder);
+lpspi_status_t LPSPI_SetBaudRate(uint32_t baudrate);
 
-void LPSPI_TransferBuffer(const uint8_t *txBuf,
-                          uint8_t *rxBuf,
-                          uint32_t length);
+/* Transfer */
+lpspi_status_t LPSPI_Transfer8(uint8_t txData, uint8_t *rxData);
+lpspi_status_t LPSPI_Transfer16(uint16_t txData, uint16_t *rxData);
 
-void     LPSPI_Write(uint16_t data);
-uint16_t LPSPI_Read(void);
+lpspi_status_t LPSPI_TransferBuffer(const uint8_t *txBuf,
+                                    uint8_t *rxBuf,
+                                    uint32_t length);
 
+/* Basic read / write */
+lpspi_status_t LPSPI_Write(uint16_t data);
+lpspi_status_t LPSPI_Read(uint16_t *data);
+
+/* Status */
 bool LPSPI_IsTxReady(void);
 bool LPSPI_IsRxReady(void);
 bool LPSPI_IsTransferComplete(void);

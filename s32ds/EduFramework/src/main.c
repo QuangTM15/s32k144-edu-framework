@@ -4,7 +4,7 @@
 #include "gpio.h"
 #include "lpspi.h"
 
-#define IS_MASTER   1   /* 1 = master, 0 = slave */
+#define IS_MASTER   0   /* 1 = master, 0 = slave */
 
 #define BTN_PORT    IP_PTC
 #define BTN_PIN     12U
@@ -13,7 +13,6 @@
 #define LED_PIN     0U
 
 #define TEST_BYTE   0xA5U
-#define TEST_LEN    3U
 
 static void DelayLoop(volatile uint32_t count)
 {
@@ -55,6 +54,7 @@ static void LED_Init(void)
 int main(void)
 {
     lpspi_config_t spiConfig;
+    lpspi_status_t status;
 
     SOSC_init_8MHz();
     SPLL_init_160MHz();
@@ -73,44 +73,56 @@ int main(void)
     spiConfig.dataSize  = LPSPI_DATASIZE_8BIT;
     spiConfig.baudrate  = 1000U;
 
-    LPSPI_Init(&spiConfig);
+    status = LPSPI_Init(&spiConfig);
+    if (status != LPSPI_STATUS_OK)
+    {
+        while (1)
+        {
+        }
+    }
 
     while (1)
     {
 #if IS_MASTER
         static uint8_t lastButtonState = 1U;
         uint8_t currentButtonState;
-
-        static const uint8_t txBuf[TEST_LEN] = {0x11U, 0x22U, TEST_BYTE};
-        uint8_t rxBuf[TEST_LEN];
+        uint8_t rxDummy;
 
         currentButtonState = GPIO_ReadPin(BTN_PORT, BTN_PIN);
 
         /* Button active low: send on falling edge */
         if ((currentButtonState == 0U) && (lastButtonState == 1U))
         {
-            LPSPI_TransferBuffer(txBuf, rxBuf, TEST_LEN);
+            status = LPSPI_Transfer8(TEST_BYTE, &rxDummy);
+            if (status == LPSPI_STATUS_OK)
+            {
+                /* optional local indication */
+                GPIO_TogglePin(LED_PORT, LED_PIN);
+            }
+
             DelayLoop(200000U);   /* simple debounce */
         }
 
         lastButtonState = currentButtonState;
 
 #else
+        uint16_t rxData;
+
         if (LPSPI_IsTxReady())
         {
-            LPSPI_Write(0x00U);
+            (void)LPSPI_Write(0x00U);
         }
 
         if (LPSPI_IsRxReady())
         {
-            uint8_t rx;
-
-            rx = (uint8_t)LPSPI_Read();
-
-            if (rx == TEST_BYTE)
+            status = LPSPI_Read(&rxData);
+            if (status == LPSPI_STATUS_OK)
             {
-                GPIO_TogglePin(LED_PORT, LED_PIN);
-                DelayLoop(200000U);
+                if ((uint8_t)rxData == TEST_BYTE)
+                {
+                    GPIO_TogglePin(LED_PORT, LED_PIN);
+                    DelayLoop(200000U);
+                }
             }
         }
 #endif
