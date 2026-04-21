@@ -46,7 +46,7 @@ static uint32_t LPSPI_BuildTCR(const lpspi_config_t *config)
         tcr |= LPSPI_TCR_LSBF(0U);
     }
 
-    if (config->dataSize == LPSPI_DATASIZE_16BIT)
+    if (config->frameSize == LPSPI_FRAME_SIZE_16)
     {
         tcr |= LPSPI_TCR_FRAMESZ(15U);
     }
@@ -61,6 +61,23 @@ static uint32_t LPSPI_BuildTCR(const lpspi_config_t *config)
 bool LPSPI_IsTxReady(void)
 {
     return ((LPSPI->SR & LPSPI_SR_TDF_MASK) != 0U);
+}
+
+void LPSPI_SetFrameSize(lpspi_frameSize_t frameSize)
+{
+    uint32_t tcr;
+
+    while (LPSPI->SR & LPSPI_SR_MBF_MASK)
+    {
+    }
+
+    tcr = LPSPI->TCR;
+
+    tcr &= ~LPSPI_TCR_FRAMESZ_MASK;
+
+    tcr |= LPSPI_TCR_FRAMESZ((uint32_t)frameSize - 1U);
+
+    LPSPI->TCR = tcr;
 }
 
 bool LPSPI_IsRxReady(void)
@@ -224,11 +241,13 @@ lpspi_status_t LPSPI_Transfer8(uint8_t txData, uint8_t *rxData)
         return LPSPI_STATUS_INVALID_ARG;
     }
 
+    LPSPI_SetFrameSize(LPSPI_FRAME_SIZE_8);
+
     while (!LPSPI_IsTxReady())
     {
     }
 
-    LPSPI->TDR = LPSPI_TDR_DATA(txData);
+    LPSPI->TDR = LPSPI_TDR_DATA((uint32_t)txData);
 
     while (!LPSPI_IsRxReady())
     {
@@ -246,11 +265,13 @@ lpspi_status_t LPSPI_Transfer16(uint16_t txData, uint16_t *rxData)
         return LPSPI_STATUS_INVALID_ARG;
     }
 
+    LPSPI_SetFrameSize(LPSPI_FRAME_SIZE_16);
+
     while (!LPSPI_IsTxReady())
     {
     }
 
-    LPSPI->TDR = LPSPI_TDR_DATA(txData);
+    LPSPI->TDR = LPSPI_TDR_DATA((uint32_t)txData);
 
     while (!LPSPI_IsRxReady())
     {
@@ -267,48 +288,96 @@ lpspi_status_t LPSPI_TransferBuffer(const uint8_t *txBuf,
 {
     uint32_t i;
     uint8_t tx;
-    uint8_t rx;
 
     if ((txBuf == (const uint8_t *)0) && (rxBuf == (uint8_t *)0))
     {
         return LPSPI_STATUS_INVALID_ARG;
     }
 
+    if (length == 0U)
+    {
+        return LPSPI_STATUS_OK;
+    }
+
+    LPSPI_SetFrameSize(LPSPI_FRAME_SIZE_8);
+
     for (i = 0U; i < length; i++)
     {
         tx = (txBuf != (const uint8_t *)0) ? txBuf[i] : 0xFFU;
 
-        if (LPSPI_Transfer8(tx, &rx) != LPSPI_STATUS_OK)
+        while (!LPSPI_IsTxReady())
         {
-            return LPSPI_STATUS_ERROR;
+        }
+
+        LPSPI->TDR = LPSPI_TDR_DATA((uint32_t)tx);
+
+        while (!LPSPI_IsRxReady())
+        {
         }
 
         if (rxBuf != (uint8_t *)0)
         {
-            rxBuf[i] = rx;
+            rxBuf[i] = (uint8_t)(LPSPI->RDR & LPSPI_RDR_DATA_MASK);
+        }
+        else
+        {
+            (void)LPSPI->RDR;
         }
     }
 
     return LPSPI_STATUS_OK;
 }
 
-lpspi_status_t LPSPI_Write(uint16_t data)
+lpspi_status_t LPSPI_Write8(uint8_t data)
 {
     while (!LPSPI_IsTxReady())
     {
     }
 
-    LPSPI->TDR = LPSPI_TDR_DATA(data);
+    LPSPI_SetFrameSize(LPSPI_FRAME_SIZE_8);
+    LPSPI->TDR = LPSPI_TDR_DATA((uint32_t)data);
 
     return LPSPI_STATUS_OK;
 }
 
-lpspi_status_t LPSPI_Read(uint16_t *data)
+lpspi_status_t LPSPI_Write16(uint16_t data)
+{
+    while (!LPSPI_IsTxReady())
+    {
+    }
+
+    LPSPI_SetFrameSize(LPSPI_FRAME_SIZE_16);
+    LPSPI->TDR = LPSPI_TDR_DATA((uint32_t)data);
+
+    return LPSPI_STATUS_OK;
+}
+
+lpspi_status_t LPSPI_Read8(uint8_t *data)
+{
+    if (data == (uint8_t *)0)
+    {
+        return LPSPI_STATUS_INVALID_ARG;
+    }
+
+    LPSPI_SetFrameSize(LPSPI_FRAME_SIZE_8);
+
+    while (!LPSPI_IsRxReady())
+    {
+    }
+
+    *data = (uint8_t)(LPSPI->RDR & LPSPI_RDR_DATA_MASK);
+
+    return LPSPI_STATUS_OK;
+}
+
+lpspi_status_t LPSPI_Read16(uint16_t *data)
 {
     if (data == (uint16_t *)0)
     {
         return LPSPI_STATUS_INVALID_ARG;
     }
+
+    LPSPI_SetFrameSize(LPSPI_FRAME_SIZE_16);
 
     while (!LPSPI_IsRxReady())
     {
@@ -318,3 +387,6 @@ lpspi_status_t LPSPI_Read(uint16_t *data)
 
     return LPSPI_STATUS_OK;
 }
+
+
+

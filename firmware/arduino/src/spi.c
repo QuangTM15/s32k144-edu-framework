@@ -78,7 +78,7 @@ void SPI_beginEx(SPI_Role_t role,
     lpspi_config_t config;
 
     SPI_PinInit();
-
+    
     g_spiRole = role;
     g_spiFrequency = frequency;
     g_spiMode = mode;
@@ -87,7 +87,7 @@ void SPI_beginEx(SPI_Role_t role,
     config.mode = (role == SPI_ROLE_MASTER) ? LPSPI_MODE_MASTER : LPSPI_MODE_SLAVE;
     config.clockMode = SPI_ToLpspiMode(mode);
     config.bitOrder = SPI_ToLpspiBitOrder(bitOrder);
-    config.dataSize = LPSPI_DATASIZE_8BIT;
+    config.frameSize = LPSPI_FRAME_SIZE_8;
     config.baudrate = (role == SPI_ROLE_MASTER) ? frequency : 0U;
 
     if (LPSPI_Init(&config) == LPSPI_STATUS_OK)
@@ -189,19 +189,19 @@ bool SPI_available(void)
 
 uint8_t SPI_read(void)
 {
-    uint16_t rxData = 0U;
+    uint8_t rxData = 0U;
 
     if (g_spiInitialized == 0U)
     {
         return 0U;
     }
 
-    if (LPSPI_Read(&rxData) != LPSPI_STATUS_OK)
+    if (LPSPI_Read8(&rxData) != LPSPI_STATUS_OK)
     {
         return 0U;
     }
 
-    return (uint8_t)rxData;
+    return rxData;
 }
 
 uint16_t SPI_read16(void)
@@ -213,22 +213,12 @@ uint16_t SPI_read16(void)
         return 0U;
     }
 
-    if (LPSPI_Read(&rxData) != LPSPI_STATUS_OK)
+    if (LPSPI_Read16(&rxData) != LPSPI_STATUS_OK)
     {
         return 0U;
     }
 
     return rxData;
-}
-
-void SPI_write(uint8_t data)
-{
-    if (g_spiInitialized == 0U)
-    {
-        return;
-    }
-
-    (void)LPSPI_Write((uint16_t)data);
 }
 
 void SPI_write16(uint16_t data)
@@ -238,7 +228,17 @@ void SPI_write16(uint16_t data)
         return;
     }
 
-    (void)LPSPI_Write(data);
+    (void)LPSPI_Write16(data);
+}
+
+void SPI_write(uint8_t data)
+{
+    if (g_spiInitialized == 0U)
+    {
+        return;
+    }
+
+    (void)LPSPI_Write8(data);
 }
 
 SPI_Role_t SPI_getRole(void)
