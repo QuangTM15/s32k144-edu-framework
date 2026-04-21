@@ -77,8 +77,13 @@ void SPI_beginEx(SPI_Role_t role,
 {
     lpspi_config_t config;
 
+    if (g_spiInitialized != 0U)
+    {
+        SPI_end();
+    }
+
     SPI_PinInit();
-    
+
     g_spiRole = role;
     g_spiFrequency = frequency;
     g_spiMode = mode;
@@ -102,6 +107,11 @@ void SPI_beginEx(SPI_Role_t role,
 
 void SPI_end(void)
 {
+    if (g_spiInitialized == 0U)
+    {
+        return;
+    }
+
     LPSPI_Disable();
     g_spiInitialized = 0U;
 }
@@ -114,7 +124,7 @@ void SPI_setFrequency(uint32_t frequency)
     }
 
     g_spiFrequency = frequency;
-    (void)LPSPI_SetBaudRate(frequency);
+    SPI_beginEx(g_spiRole, g_spiFrequency, g_spiMode, g_spiBitOrder);
 }
 
 void SPI_setDataMode(SPI_Mode_t mode)
@@ -125,7 +135,7 @@ void SPI_setDataMode(SPI_Mode_t mode)
     }
 
     g_spiMode = mode;
-    (void)LPSPI_SetMode(SPI_ToLpspiMode(mode));
+    SPI_beginEx(g_spiRole, g_spiFrequency, g_spiMode, g_spiBitOrder);
 }
 
 void SPI_setBitOrder(SPI_BitOrder_t bitOrder)
@@ -136,7 +146,7 @@ void SPI_setBitOrder(SPI_BitOrder_t bitOrder)
     }
 
     g_spiBitOrder = bitOrder;
-    (void)LPSPI_SetBitOrder(SPI_ToLpspiBitOrder(bitOrder));
+    SPI_beginEx(g_spiRole, g_spiFrequency, g_spiMode, g_spiBitOrder);
 }
 
 uint8_t SPI_transfer(uint8_t data)

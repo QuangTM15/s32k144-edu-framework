@@ -102,53 +102,84 @@ void LPSPI_Disable(void)
 
 lpspi_status_t LPSPI_SetMode(lpspi_clock_mode_t mode)
 {
-    g_lpspiConfig.clockMode = mode;
-
-    LPSPI->TCR &= ~(LPSPI_TCR_CPOL_MASK | LPSPI_TCR_CPHA_MASK);
+    uint32_t tcr;
 
     switch (mode)
     {
         case LPSPI_MODE0:
-            LPSPI->TCR |= LPSPI_TCR_CPOL(0U) | LPSPI_TCR_CPHA(0U);
-            break;
-
         case LPSPI_MODE1:
-            LPSPI->TCR |= LPSPI_TCR_CPOL(0U) | LPSPI_TCR_CPHA(1U);
-            break;
-
         case LPSPI_MODE2:
-            LPSPI->TCR |= LPSPI_TCR_CPOL(1U) | LPSPI_TCR_CPHA(0U);
-            break;
-
         case LPSPI_MODE3:
-            LPSPI->TCR |= LPSPI_TCR_CPOL(1U) | LPSPI_TCR_CPHA(1U);
+            g_lpspiConfig.clockMode = mode;
             break;
 
         default:
             return LPSPI_STATUS_INVALID_ARG;
     }
 
+    while (LPSPI->SR & LPSPI_SR_MBF_MASK)
+    {
+    }
+
+    tcr = LPSPI->TCR;
+    tcr &= ~(LPSPI_TCR_CPOL_MASK | LPSPI_TCR_CPHA_MASK);
+
+    switch (mode)
+    {
+        case LPSPI_MODE0:
+            tcr |= LPSPI_TCR_CPOL(0U) | LPSPI_TCR_CPHA(0U);
+            break;
+
+        case LPSPI_MODE1:
+            tcr |= LPSPI_TCR_CPOL(0U) | LPSPI_TCR_CPHA(1U);
+            break;
+
+        case LPSPI_MODE2:
+            tcr |= LPSPI_TCR_CPOL(1U) | LPSPI_TCR_CPHA(0U);
+            break;
+
+        case LPSPI_MODE3:
+            tcr |= LPSPI_TCR_CPOL(1U) | LPSPI_TCR_CPHA(1U);
+            break;
+
+        default:
+            break;
+    }
+
+    LPSPI->TCR = tcr;
+
     return LPSPI_STATUS_OK;
 }
 
 lpspi_status_t LPSPI_SetBitOrder(lpspi_bit_order_t bitOrder)
 {
-    g_lpspiConfig.bitOrder = bitOrder;
+    uint32_t tcr;
 
-    LPSPI->TCR &= ~LPSPI_TCR_LSBF_MASK;
-
-    if (bitOrder == LPSPI_LSB_FIRST)
-    {
-        LPSPI->TCR |= LPSPI_TCR_LSBF(1U);
-    }
-    else if (bitOrder == LPSPI_MSB_FIRST)
-    {
-        LPSPI->TCR |= LPSPI_TCR_LSBF(0U);
-    }
-    else
+    if ((bitOrder != LPSPI_MSB_FIRST) &&
+        (bitOrder != LPSPI_LSB_FIRST))
     {
         return LPSPI_STATUS_INVALID_ARG;
     }
+
+    g_lpspiConfig.bitOrder = bitOrder;
+
+    while (LPSPI->SR & LPSPI_SR_MBF_MASK)
+    {
+    }
+
+    tcr = LPSPI->TCR;
+    tcr &= ~LPSPI_TCR_LSBF_MASK;
+
+    if (bitOrder == LPSPI_LSB_FIRST)
+    {
+        tcr |= LPSPI_TCR_LSBF(1U);
+    }
+    else
+    {
+        tcr |= LPSPI_TCR_LSBF(0U);
+    }
+
+    LPSPI->TCR = tcr;
 
     return LPSPI_STATUS_OK;
 }
@@ -160,10 +191,12 @@ lpspi_status_t LPSPI_SetBaudRate(uint32_t baudrate)
         return LPSPI_STATUS_INVALID_ARG;
     }
 
-    /* Keep old simple logic for now */
     g_lpspiConfig.baudrate = baudrate;
 
-    /* Fixed simple timing, same logic as before */
+    while (LPSPI->SR & LPSPI_SR_MBF_MASK)
+    {
+    }
+
     LPSPI->CCR =
         LPSPI_CCR_SCKPCS(0U) |
         LPSPI_CCR_PCSSCK(0U) |
@@ -224,7 +257,14 @@ lpspi_status_t LPSPI_Init(const lpspi_config_t *config)
 
     if (config->mode == LPSPI_MODE_MASTER)
     {
-        LPSPI_SetBaudRate(config->baudrate);
+        LPSPI->CCR =
+            LPSPI_CCR_SCKPCS(0U) |
+            LPSPI_CCR_PCSSCK(0U) |
+            LPSPI_CCR_DBT(0U)    |
+            LPSPI_CCR_SCKDIV(10U);
+
+        LPSPI->TCR &= ~LPSPI_TCR_PRESCALE_MASK;
+        LPSPI->TCR |= LPSPI_TCR_PRESCALE(0U);
     }
 
     LPSPI->FCR = LPSPI_FCR_TXWATER(0U) | LPSPI_FCR_RXWATER(0U);
@@ -234,14 +274,13 @@ lpspi_status_t LPSPI_Init(const lpspi_config_t *config)
     return LPSPI_STATUS_OK;
 }
 
+
 lpspi_status_t LPSPI_Transfer8(uint8_t txData, uint8_t *rxData)
 {
     if (rxData == (uint8_t *)0)
     {
         return LPSPI_STATUS_INVALID_ARG;
     }
-
-    LPSPI_SetFrameSize(LPSPI_FRAME_SIZE_8);
 
     while (!LPSPI_IsTxReady())
     {
@@ -334,7 +373,6 @@ lpspi_status_t LPSPI_Write8(uint8_t data)
     {
     }
 
-    LPSPI_SetFrameSize(LPSPI_FRAME_SIZE_8);
     LPSPI->TDR = LPSPI_TDR_DATA((uint32_t)data);
 
     return LPSPI_STATUS_OK;
@@ -358,8 +396,6 @@ lpspi_status_t LPSPI_Read8(uint8_t *data)
     {
         return LPSPI_STATUS_INVALID_ARG;
     }
-
-    LPSPI_SetFrameSize(LPSPI_FRAME_SIZE_8);
 
     while (!LPSPI_IsRxReady())
     {
