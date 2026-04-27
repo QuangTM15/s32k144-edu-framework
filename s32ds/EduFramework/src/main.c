@@ -1,6 +1,6 @@
 #include "S32K144.h"
-#include "spi_full_demo.h"
+#include "lpi2c.h"
 int main (void) {
-	Demo_SPI_Full();
 	while(1) {}
+	return 0;
 }
