@@ -33,6 +33,51 @@
                                              LPI2C_MIER_SDIE_MASK)
 
 /* ============================================================
+ * Slave definitions
+ * ============================================================ */
+
+#define LPI2C_SLAVE_CLEAR_FLAGS        (LPI2C_SSR_SARF_MASK | \
+                                        LPI2C_SSR_GCF_MASK  | \
+                                        LPI2C_SSR_AM1F_MASK | \
+                                        LPI2C_SSR_AM0F_MASK | \
+                                        LPI2C_SSR_FEF_MASK  | \
+                                        LPI2C_SSR_BEF_MASK  | \
+                                        LPI2C_SSR_SDF_MASK  | \
+                                        LPI2C_SSR_RSF_MASK)
+
+#define LPI2C_SLAVE_IT_INTERRUPTS      (LPI2C_SIER_AVIE_MASK  | \
+                                        LPI2C_SIER_RDIE_MASK  | \
+                                        LPI2C_SIER_TDIE_MASK  | \
+                                        LPI2C_SIER_SDIE_MASK  | \
+                                        LPI2C_SIER_RSIE_MASK  | \
+                                        LPI2C_SIER_BEIE_MASK  | \
+                                        LPI2C_SIER_FEIE_MASK  | \
+                                        LPI2C_SIER_AM0IE_MASK)
+
+static LPI2C_SlaveConfig_t s_lpi2c0SlaveConfig;
+
+static void LPI2C_SlaveClearStatus(LPI2C_Type *base)
+{
+    base->SSR = LPI2C_SLAVE_CLEAR_FLAGS;
+}
+
+static void LPI2C_SlaveResetFifoInternal(LPI2C_Type *base)
+{
+    base->SCR |= LPI2C_SCR_RTF_MASK | LPI2C_SCR_RRF_MASK;
+}
+
+static void LPI2C_SlaveCallEvent(LPI2C_Type *base,
+                                 LPI2C_SlaveEvent_t event)
+{
+    if (s_lpi2c0SlaveConfig.callback != (LPI2C_SlaveCallback_t)0)
+    {
+        s_lpi2c0SlaveConfig.callback(base,
+                                     event,
+                                     s_lpi2c0SlaveConfig.userData);
+    }
+}
+
+/* ============================================================
  * Internal state
  * ============================================================ */
 
@@ -995,7 +1040,7 @@ bool LPI2C_MasterIsBusy(LPI2C_Type *base)
 }
 
 /* ============================================================
- * Slave API - placeholder for Phase 4
+ * Slave API
  * ============================================================ */
 
 void LPI2C_SlaveGetDefaultConfig(LPI2C_SlaveConfig_t *config)
@@ -1005,10 +1050,12 @@ void LPI2C_SlaveGetDefaultConfig(LPI2C_SlaveConfig_t *config)
         return;
     }
 
-    config->slaveAddress = 0x10U;
+    config->slaveAddress = 0x12U;
+
     config->enableGeneralCall = false;
     config->enableClockStretching = true;
     config->enableFilter = true;
+
     config->callback = (LPI2C_SlaveCallback_t)0;
     config->userData = 0;
 }
@@ -1016,36 +1063,229 @@ void LPI2C_SlaveGetDefaultConfig(LPI2C_SlaveConfig_t *config)
 LPI2C_Status_t LPI2C_SlaveInit(LPI2C_Type *base,
                                const LPI2C_SlaveConfig_t *config)
 {
-    (void)base;
-    (void)config;
+    uint32_t scfgr1;
+    uint32_t scr;
 
-    return LPI2C_STATUS_ERROR;
+    if ((base == 0) || (config == 0))
+    {
+        return LPI2C_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (base != IP_LPI2C0)
+    {
+        return LPI2C_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (!LPI2C_IsValid7BitAddress(config->slaveAddress))
+    {
+        return LPI2C_STATUS_INVALID_ARGUMENT;
+    }
+
+    /*
+     * LPI2C master and slave share the same pins on S32K144.
+     * Port/PCC may already be enabled by MasterInit, but slave init should
+     * also be self-contained.
+     */
+    LPI2C0_PortInit();
+
+    IP_PCC->PCCn[PCC_LPI2C0_INDEX] = 0U;
+    IP_PCC->PCCn[PCC_LPI2C0_INDEX] =
+        PCC_PCCn_PCS(LPI2C0_PCC_CLOCK_SOURCE) |
+        PCC_PCCn_CGC_MASK;
+
+    s_lpi2c0SlaveConfig = *config;
+
+    /* Reset slave logic */
+    base->SCR = LPI2C_SCR_RST_MASK;
+    base->SCR = 0U;
+
+    base->SIER = 0U;
+    base->SDER = 0U;
+
+    LPI2C_SlaveClearStatus(base);
+    LPI2C_SlaveResetFifoInternal(base);
+
+    /*
+     * 7-bit address match 0.
+     * SAMR ADDR0 stores address in bits [7:1] for 7-bit mode.
+     */
+    base->SAMR = LPI2C_SAMR_ADDR0((uint32_t)config->slaveAddress);
+
+    scfgr1 = LPI2C_SCFGR1_ADDRCFG(0U);
+
+    if (config->enableGeneralCall)
+    {
+        scfgr1 |= LPI2C_SCFGR1_GCEN_MASK;
+    }
+
+    if (config->enableClockStretching)
+    {
+        /*
+         * Clock stretching avoids RX overrun / TX underrun while software ISR runs.
+         */
+        scfgr1 |= LPI2C_SCFGR1_ADRSTALL_MASK |
+                  LPI2C_SCFGR1_RXSTALL_MASK  |
+                  LPI2C_SCFGR1_TXDSTALL_MASK;
+    }
+
+    base->SCFGR1 = scfgr1;
+
+    /*
+     * Simple safe slave timing/filter.
+     * These are conservative values for initial interrupt slave testing.
+     */
+    base->SCFGR2 = LPI2C_SCFGR2_FILTSCL(1U) |
+                   LPI2C_SCFGR2_FILTSDA(1U) |
+                   LPI2C_SCFGR2_DATAVD(2U)  |
+                   LPI2C_SCFGR2_CLKHOLD(2U);
+
+    base->SIER = LPI2C_SLAVE_IT_INTERRUPTS;
+
+    scr = 0U;
+
+    if (config->enableFilter)
+    {
+        scr |= LPI2C_SCR_FILTEN_MASK;
+    }
+
+    base->SCR = scr | LPI2C_SCR_SEN_MASK;
+
+    return LPI2C_STATUS_OK;
 }
 
 void LPI2C_SlaveDeinit(LPI2C_Type *base)
 {
-    (void)base;
+    if (base == 0)
+    {
+        return;
+    }
+
+    base->SIER = 0U;
+    base->SDER = 0U;
+    base->SCR = 0U;
 }
 
 void LPI2C_SlaveIRQHandler(LPI2C_Type *base)
 {
-    (void)base;
+    uint32_t status;
+
+    if (base != IP_LPI2C0)
+    {
+        return;
+    }
+
+    status = base->SSR;
+
+    if (((status & LPI2C_SSR_FEF_MASK) != 0U) ||
+        ((status & LPI2C_SSR_BEF_MASK) != 0U))
+    {
+        LPI2C_SlaveCallEvent(base, LPI2C_SLAVE_EVENT_ERROR);
+
+        base->SSR = LPI2C_SSR_FEF_MASK |
+                    LPI2C_SSR_BEF_MASK;
+    }
+
+    if ((status & LPI2C_SSR_AVF_MASK) != 0U)
+    {
+        /*
+         * Reading SASR clears AVF and gives received address/RW bit.
+         */
+        (void)base->SASR;
+
+        LPI2C_SlaveCallEvent(base, LPI2C_SLAVE_EVENT_ADDRESS_MATCH);
+    }
+
+    if ((status & LPI2C_SSR_RDF_MASK) != 0U)
+    {
+        /*
+         * Do not read SRDR here.
+         * Let user callback call LPI2C_SlaveReadByte().
+         */
+        LPI2C_SlaveCallEvent(base, LPI2C_SLAVE_EVENT_RX_DATA);
+    }
+
+    if ((status & LPI2C_SSR_TDF_MASK) != 0U)
+    {
+        /*
+         * Let user callback provide data by calling LPI2C_SlaveWriteByte().
+         */
+        LPI2C_SlaveCallEvent(base, LPI2C_SLAVE_EVENT_TX_REQUEST);
+    }
+
+    if ((status & LPI2C_SSR_RSF_MASK) != 0U)
+    {
+        base->SSR = LPI2C_SSR_RSF_MASK;
+        LPI2C_SlaveCallEvent(base, LPI2C_SLAVE_EVENT_REPEATED_START);
+    }
+
+    if ((status & LPI2C_SSR_SDF_MASK) != 0U)
+    {
+        base->SSR = LPI2C_SSR_SDF_MASK;
+        LPI2C_SlaveCallEvent(base, LPI2C_SLAVE_EVENT_STOP);
+    }
+
+    if ((status & LPI2C_SSR_AM0F_MASK) != 0U)
+    {
+        base->SSR = LPI2C_SSR_AM0F_MASK;
+    }
+
+    if ((status & LPI2C_SSR_AM1F_MASK) != 0U)
+    {
+        base->SSR = LPI2C_SSR_AM1F_MASK;
+    }
+
+    if ((status & LPI2C_SSR_GCF_MASK) != 0U)
+    {
+        base->SSR = LPI2C_SSR_GCF_MASK;
+    }
+
+    if ((status & LPI2C_SSR_SARF_MASK) != 0U)
+    {
+        base->SSR = LPI2C_SSR_SARF_MASK;
+    }
 }
 
 LPI2C_Status_t LPI2C_SlaveWriteByte(LPI2C_Type *base,
                                     uint8_t data)
 {
-    (void)base;
-    (void)data;
+    if (base == 0)
+    {
+        return LPI2C_STATUS_INVALID_ARGUMENT;
+    }
 
-    return LPI2C_STATUS_ERROR;
+    if ((base->SSR & LPI2C_SSR_TDF_MASK) == 0U)
+    {
+        return LPI2C_STATUS_BUSY;
+    }
+
+    base->STDR = LPI2C_STDR_DATA(data);
+
+    return LPI2C_STATUS_OK;
 }
 
 LPI2C_Status_t LPI2C_SlaveReadByte(LPI2C_Type *base,
                                    uint8_t *data)
 {
-    (void)base;
-    (void)data;
+    uint32_t rxWord;
 
-    return LPI2C_STATUS_ERROR;
+    if ((base == 0) || (data == 0))
+    {
+        return LPI2C_STATUS_INVALID_ARGUMENT;
+    }
+
+    if ((base->SSR & LPI2C_SSR_RDF_MASK) == 0U)
+    {
+        return LPI2C_STATUS_BUSY;
+    }
+
+    rxWord = base->SRDR;
+
+    if ((rxWord & LPI2C_SRDR_RXEMPTY_MASK) != 0U)
+    {
+        return LPI2C_STATUS_ERROR;
+    }
+
+    *data = (uint8_t)(rxWord & LPI2C_SRDR_DATA_MASK);
+
+    return LPI2C_STATUS_OK;
 }

@@ -144,6 +144,11 @@ void IRQ_LPI2C0_Master_Init(void)
         (1UL << (LPI2C0_MASTER_IRQ_NUMBER % 32U));
 }
 
+void LPI2C0_Master_IRQHandler(void)
+{
+    LPI2C_MasterIRQHandler(IP_LPI2C0);
+}
+
 void IRQ_LPI2C0_Slave_Init(void)
 {
     NVIC_ICPR_BASE[LPI2C0_SLAVE_IRQ_NUMBER / 32U] =
@@ -155,12 +160,7 @@ void IRQ_LPI2C0_Slave_Init(void)
         (1UL << (LPI2C0_SLAVE_IRQ_NUMBER % 32U));
 }
 
-void LPI2C0_Master_IRQHandler(void)
+void LPI2C0_Slave_IRQHandler(void)
 {
-    LPI2C_MasterIRQHandler(IP_LPI2C0);
+    LPI2C_SlaveIRQHandler(IP_LPI2C0);
 }
-
-//void LPI2C0_Slave_IRQHandler(void)
-//{
-//    LPI2C_SlaveIRQHandler(IP_LPI2C0);
-//}
