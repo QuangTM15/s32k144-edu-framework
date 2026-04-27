@@ -12,7 +12,7 @@
  * - Bare-metal register-level driver
  * - Transaction-based
  * - Master + Slave support
- * - Blocking first, interrupt state machine later
+ * - Blocking + Interrupt
  * - Wire API will wrap this driver later
  * ============================================================ */
 
@@ -50,8 +50,8 @@ typedef enum
 
 typedef struct
 {
-    uint32_t srcClockHz;     /* LPI2C functional clock */
-    uint32_t baudRate;       /* 100k / 400k / 1M */
+    uint32_t srcClockHz;
+    uint32_t baudRate;
 
     bool enableDebug;
     bool enableDoze;
@@ -72,7 +72,7 @@ typedef enum
 
 typedef struct
 {
-    uint8_t slaveAddress;        /* 7-bit address */
+    uint8_t slaveAddress;
 
     const uint8_t *txData;
     uint16_t txSize;
@@ -109,6 +109,8 @@ typedef struct
 
     uint16_t txCount;
     uint16_t rxCount;
+
+    bool rxCommandSent;
 } LPI2C_MasterHandle_t;
 
 /* ============================================================
@@ -131,7 +133,7 @@ typedef void (*LPI2C_SlaveCallback_t)(LPI2C_Type *base,
 
 typedef struct
 {
-    uint8_t slaveAddress;        /* 7-bit address */
+    uint8_t slaveAddress;
 
     bool enableGeneralCall;
     bool enableClockStretching;
@@ -184,8 +186,7 @@ LPI2C_Status_t LPI2C_MasterTransferIT(LPI2C_Type *base,
                                       LPI2C_MasterHandle_t *handle,
                                       const LPI2C_MasterTransfer_t *transfer);
 
-void LPI2C_MasterIRQHandler(LPI2C_Type *base,
-                            LPI2C_MasterHandle_t *handle);
+void LPI2C_MasterIRQHandler(LPI2C_Type *base);
 
 LPI2C_MasterState_t LPI2C_MasterGetState(const LPI2C_MasterHandle_t *handle);
 

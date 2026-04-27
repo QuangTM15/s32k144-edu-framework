@@ -26,4 +26,11 @@ void LPUART2_RxTx_IRQHandler(void);
 
 void IRQ_ADC0_Init(void);
 void ADC0_IRQHandler(void);
+
+/*LPI2C Interrupt*/
+
+void IRQ_LPI2C0_Master_Init(void);
+void IRQ_LPI2C0_Slave_Init(void);
+void LPI2C0_Master_IRQHandler(void);
+void LPI2C0_Slave_IRQHandler(void);
 #endif /* IRQ_H */

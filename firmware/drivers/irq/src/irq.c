@@ -3,6 +3,7 @@
 #include "lpit.h"
 #include "lpuart.h"
 #include "adc.h"
+#include "lpi2c.h"
 
 /* ============================================================
  * IRQ numbers (from RM / NVIC table)
@@ -20,6 +21,11 @@
 #define ADC0_IRQ_NUMBER      (39U)
 #define ADC0_IRQ_PRIORITY    (0xA0U)
 
+#define LPI2C0_MASTER_IRQ_NUMBER       (24U)
+#define LPI2C0_MASTER_PRIORITY         (10U)
+
+#define LPI2C0_SLAVE_IRQ_NUMBER        (25U)
+#define LPI2C0_SLAVE_PRIORITY          (10U)
 
 /* ============================================================
  * NVIC registers
@@ -122,3 +128,39 @@ void ADC0_IRQHandler(void)
 {
     ADC_IRQHandler(IP_ADC_0);
 }
+
+/* ============================================================
+ * LPI2C IRQ config
+ * ============================================================ */
+
+void IRQ_LPI2C0_Master_Init(void)
+{
+    NVIC_ICPR_BASE[LPI2C0_MASTER_IRQ_NUMBER / 32U] =
+        (1UL << (LPI2C0_MASTER_IRQ_NUMBER % 32U));
+
+    NVIC_IPR_BASE[LPI2C0_MASTER_IRQ_NUMBER] = LPI2C0_MASTER_PRIORITY;
+
+    NVIC_ISER_BASE[LPI2C0_MASTER_IRQ_NUMBER / 32U] =
+        (1UL << (LPI2C0_MASTER_IRQ_NUMBER % 32U));
+}
+
+void IRQ_LPI2C0_Slave_Init(void)
+{
+    NVIC_ICPR_BASE[LPI2C0_SLAVE_IRQ_NUMBER / 32U] =
+        (1UL << (LPI2C0_SLAVE_IRQ_NUMBER % 32U));
+
+    NVIC_IPR_BASE[LPI2C0_SLAVE_IRQ_NUMBER] = LPI2C0_SLAVE_PRIORITY;
+
+    NVIC_ISER_BASE[LPI2C0_SLAVE_IRQ_NUMBER / 32U] =
+        (1UL << (LPI2C0_SLAVE_IRQ_NUMBER % 32U));
+}
+
+void LPI2C0_Master_IRQHandler(void)
+{
+    LPI2C_MasterIRQHandler(IP_LPI2C0);
+}
+
+//void LPI2C0_Slave_IRQHandler(void)
+//{
+//    LPI2C_SlaveIRQHandler(IP_LPI2C0);
+//}
