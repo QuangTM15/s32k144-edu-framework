@@ -77,6 +77,7 @@ int main(void)
 ---
 ## 📂 Project Structure
 
+```
 firmware/
 ├── drivers/     # register-level drivers
 ├── core/        # Arduino-style API
@@ -88,7 +89,7 @@ tests/
 docs/
 ├── vi/
 └── en/
-
+```
 ---
 ## 🧠 Philosophy
 Driver = hardware control
