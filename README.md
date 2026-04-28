@@ -74,7 +74,7 @@ int main(void)
     }
 }
 
-📂 Project Structure
+## 📂 Project Structure
 
 firmware/
 ├── drivers/     # register-level drivers
@@ -88,7 +88,7 @@ docs/
 ├── vi/
 └── en/
 
-🧠 Philosophy
+## 🧠 Philosophy
 Driver = hardware control
 API = easy to use
 Demo = how to learn
