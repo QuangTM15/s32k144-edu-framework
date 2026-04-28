@@ -73,7 +73,8 @@ int main(void)
         delay(500);
     }
 }
-
+```
+---
 ## 📂 Project Structure
 
 firmware/
@@ -88,6 +89,7 @@ docs/
 ├── vi/
 └── en/
 
+---
 ## 🧠 Philosophy
 Driver = hardware control
 API = easy to use
