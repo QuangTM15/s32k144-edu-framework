@@ -12,6 +12,7 @@
 #include "hardware_serial.h"
 #include "wiring_analog.h"
 #include "spi.h"
+#include "wire.h"
 void setup(void);
 
 #endif /* ARDUINO_H */
