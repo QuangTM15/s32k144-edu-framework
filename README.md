@@ -2,10 +2,10 @@
 
 EduFramework is a bare-metal embedded framework for **NXP S32K144 (MaaZEDU)**.
 
-- No vendor SDK  
-- Register-level drivers  
-- Arduino-style API (easy to use)  
-- Designed for learning and teaching  
+- No vendor SDK
+- Register-level drivers
+- Arduino-style API (easy to use)
+- Designed for learning and teaching
 
 ---
 
@@ -24,11 +24,11 @@ Just follow this path:
 1. Read:
    - `docs/vi/library-usage.md`
 
-2. Then check API:
-   - `docs/vi/api/`
+2. Then understand the API read:
+   - `docs/en/api/`
 
-3. Then copy example:
-   - `docs/vi/examples/`
+3. Then understand how to use api to project read:
+   - `docs/en/tutorial/`
 
 👉 That’s it. You can use the framework immediately.
 
@@ -41,13 +41,12 @@ Just follow this path:
 Follow this path:
 
 1. Read API implementation:
-   - `firmware/core/`
+   - `firmware/arduino/`
 
 2. Then read drivers:
    - `firmware/drivers/`
 
 3. Then trace flow:
-
 
 👉 This is where real learning happens.
 
@@ -74,13 +73,15 @@ int main(void)
     }
 }
 ```
+
 ---
+
 ## 📂 Project Structure
 
 ```
 firmware/
 ├── drivers/     # register-level drivers
-├── core/        # Arduino-style API
+├── arduino/        # Arduino-style API
 ├── hal/         # sensor libraries (future)
 
 tests/
@@ -90,8 +91,11 @@ docs/
 ├── vi/
 └── en/
 ```
+
 ---
+
 ## 🧠 Philosophy
+
 Driver = hardware control
 API = easy to use
 Demo = how to learn
