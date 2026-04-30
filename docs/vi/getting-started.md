@@ -199,6 +199,7 @@ int main(void)
     }
 }
 ```
+Chú ý : mọi chương trình đều phải gọi hàm setup(); ở đầu chương trình để có thể config được những hàm mặc định bắt buộc cần có để khởi động code. Nếu thiếu setup() thì code có thể không hoạt động hoặc tệ hơn có thể dẫn đến treo chip.
 
 ---
 
