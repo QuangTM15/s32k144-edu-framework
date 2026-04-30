@@ -2,57 +2,67 @@
 
 EduFramework is a bare-metal embedded framework for **NXP S32K144 (MaaZEDU)**.
 
-- No vendor SDK
-- Register-level drivers
-- Arduino-style API (easy to use)
-- Designed for learning and teaching
+* No vendor SDK
+* Register-level drivers
+* Arduino-style API
+* Designed for learning and teaching
 
 ---
 
-## 🎯 Who is this for?
+## Overview
 
-EduFramework supports **two types of users**:
+EduFramework is designed with two main goals:
 
----
+* Easy to use (like Arduino)
+* Easy to understand (for learning embedded systems)
 
-### 🔹 1. You just want to USE it (like Arduino)
+This repository contains:
 
-👉 You do NOT need to understand drivers or hardware
-
-Just follow this path:
-
-1. Read:
-   - `docs/vi/library-usage.md`
-
-2. Then understand the API read:
-   - `docs/en/api/`
-
-3. Then understand how to use api to project read:
-   - `docs/en/tutorial/`
-
-👉 That’s it. You can use the framework immediately.
+* Core framework (drivers + API)
+* Example demos
+* Documentation
 
 ---
 
-### 🔹 2. You want to LEARN how it works
+## Getting Started
 
-👉 You want to understand embedded systems deeply
+The recommended way to use this framework is through the documentation.
+
+### If you want to USE the framework
 
 Follow this path:
 
-1. Read API implementation:
-   - `firmware/arduino/`
+1. Start with:
 
-2. Then read drivers:
-   - `firmware/drivers/`
+   * `docs/vi/getting-started.md`
 
-3. Then trace flow:
+2. Then read API:
 
-👉 This is where real learning happens.
+   * `docs/en/apis/`
+
+3. Then learn through examples:
+
+   * `docs/en/tutorials/`
 
 ---
 
-## ⚡ Quick Example
+### If you want to LEARN how it works
+
+Follow this path:
+
+1. Arduino-style API:
+
+   * `firmware/arduino/`
+
+2. Low-level drivers:
+
+   * `firmware/drivers/`
+
+3. Trace the flow from API → driver → register
+
+---
+
+## Example
 
 ```c
 #include "Arduino.h"
@@ -76,16 +86,16 @@ int main(void)
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 firmware/
-├── drivers/     # register-level drivers
-├── arduino/        # Arduino-style API
-├── hal/         # sensor libraries (future)
+├── drivers/      # register-level drivers
+├── arduino/      # Arduino-style API
+├── hal/          # sensor libraries (future)
 
 tests/
-└── demo/        # examples
+└── demo/         # examples
 
 docs/
 ├── vi/
@@ -94,11 +104,24 @@ docs/
 
 ---
 
-## 🧠 Philosophy
+## Philosophy
 
-Driver = hardware control
-API = easy to use
-Demo = how to learn
+* Driver = hardware control
+* API = easy to use
+* Demo = learning through practice
 
-Code makes it work  
-Docs make it usable
+Code makes it work
+Documentation makes it usable
+
+---
+
+## Documentation
+
+All detailed guides are in the `docs/` folder:
+
+* `docs/vi/` – Vietnamese documentation
+* `docs/en/` – English documentation
+
+Start here:
+
+* `docs/vi/getting-started.md`
