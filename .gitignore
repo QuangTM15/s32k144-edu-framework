@@ -26,5 +26,6 @@ Release/
 Thumbs.db
 
 workspace/
+Codex/
 
 *.out

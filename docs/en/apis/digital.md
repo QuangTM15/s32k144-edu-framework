@@ -165,5 +165,4 @@ digitalToggle(LED_BLUE);
 ## Example
 
 You can learn how to use these digital functions through tutorials such as `btn_led` or `full_led`.
-
 ##

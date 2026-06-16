@@ -1,7 +1,9 @@
-#include "S32K144.h"
 #include "Arduino.h"
-#include "i2c_demo.h"
+#include "S32K144.h"
+#include "gpio.h"
+#include "port.h"
+#include "full_led.h"
 int main () {
-	Demo_I2C();
+	Demo_FullLed();
 	return 0;
 }
