@@ -22,7 +22,6 @@
  * @brief GPIO pin direction type.
  */
 typedef uint8_t gpio_direction_t;
-
 /**
  * @brief Configure GPIO pin as input.
  */

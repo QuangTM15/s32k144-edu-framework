@@ -1,3 +1,25 @@
+/**
+ * @file irq.c
+ * @brief Interrupt configuration and ISR bridge implementation.
+ *
+ * @details
+ * This file configures NVIC interrupt lines and implements ISR entry
+ * points used by the startup vector table.
+ *
+ * Clean status:
+ * - LPIT0 channel 0 interrupt path has been cleaned.
+ * - LPUART, ADC, and LPI2C interrupt paths are intentionally left mostly
+ *   unchanged and should be cleaned in later module-specific cleanup steps.
+ *
+ * LPIT clean scope:
+ * - Added documentation for LPIT interrupt configuration and ISR.
+ * - Renamed LPIT callback variable using project naming convention.
+ * - Added NVIC helper macros for register index and interrupt bit mask.
+ * - Applied constant-left condition style to LPIT callback check.
+ * - Kept interrupt number, priority value, public API, and runtime behavior
+ *   unchanged.
+ */
+
 #include "S32K144.h"
 #include "irq.h"
 #include "lpit.h"
@@ -6,10 +28,20 @@
 #include "lpi2c.h"
 
 /* ============================================================
- * IRQ numbers (from RM / NVIC table)
+ * IRQ numbers and priorities
  * ============================================================ */
 
+/**
+ * @brief NVIC interrupt number for LPIT0 channel 0.
+ */
 #define LPIT0_CH0_IRQ_NUMBER        (48U)
+
+/**
+ * @brief NVIC priority value for LPIT0 channel 0.
+ *
+ * @details
+ * The value is kept unchanged from the previous implementation.
+ */
 #define LPIT0_CH0_PRIORITY          (10U)
 
 #define LPUART1_RXTX_IRQ_NUMBER     (33U)
@@ -18,47 +50,113 @@
 #define LPUART2_RXTX_IRQ_NUMBER     (35U)
 #define LPUART2_RXTX_PRIORITY       (10U)
 
-#define ADC0_IRQ_NUMBER      (39U)
-#define ADC0_IRQ_PRIORITY    (0xA0U)
+#define ADC0_IRQ_NUMBER             (39U)
+#define ADC0_IRQ_PRIORITY           (0xA0U)
 
-#define LPI2C0_MASTER_IRQ_NUMBER       (24U)
-#define LPI2C0_MASTER_PRIORITY         (10U)
+#define LPI2C0_MASTER_IRQ_NUMBER    (24U)
+#define LPI2C0_MASTER_PRIORITY      (10U)
 
-#define LPI2C0_SLAVE_IRQ_NUMBER        (25U)
-#define LPI2C0_SLAVE_PRIORITY          (10U)
-
-/* ============================================================
- * NVIC registers
- * ============================================================ */
-
-#define NVIC_ISER_BASE   ((volatile uint32_t *)0xE000E100UL)
-#define NVIC_ICPR_BASE   ((volatile uint32_t *)0xE000E280UL)
-#define NVIC_IPR_BASE    ((volatile uint8_t  *)0xE000E400UL)
+#define LPI2C0_SLAVE_IRQ_NUMBER     (25U)
+#define LPI2C0_SLAVE_PRIORITY       (10U)
 
 /* ============================================================
- * LPIT callback
+ * NVIC register access
  * ============================================================ */
 
-static irq_callback_t s_lpit0Ch0Callback = (irq_callback_t)0;
+/**
+ * @brief Cortex-M NVIC Interrupt Set-Enable Register base address.
+ */
+#define NVIC_ISER_BASE              ((volatile uint32_t *)0xE000E100UL)
+
+/**
+ * @brief Cortex-M NVIC Interrupt Clear-Pending Register base address.
+ */
+#define NVIC_ICPR_BASE              ((volatile uint32_t *)0xE000E280UL)
+
+/**
+ * @brief Cortex-M NVIC Interrupt Priority Register base address.
+ */
+#define NVIC_IPR_BASE               ((volatile uint8_t  *)0xE000E400UL)
+
+/**
+ * @brief Get NVIC register array index from interrupt number.
+ *
+ * @param[in] u8IrqNumber
+ * NVIC interrupt number.
+ */
+#define IRQ_NVIC_REG_INDEX(u8IrqNumber)    ((u8IrqNumber) / 32U)
+
+/**
+ * @brief Get NVIC interrupt bit mask from interrupt number.
+ *
+ * @param[in] u8IrqNumber
+ * NVIC interrupt number.
+ */
+#define IRQ_NVIC_BIT_MASK(u8IrqNumber)     (1UL << ((u8IrqNumber) % 32U))
 
 /* ============================================================
- * LPIT IRQ config
+ * LPIT callback storage
  * ============================================================ */
 
+/**
+ * @brief Callback executed from LPIT0 channel 0 interrupt context.
+ */
+static irq_callback_t s_pfLpit0Ch0Callback = (irq_callback_t)0;
+
+/* ============================================================
+ * LPIT IRQ configuration
+ * ============================================================ */
+
+/**
+ * @brief Initialize NVIC configuration for LPIT0 channel 0 interrupt.
+ *
+ * @details
+ * This function clears any pending LPIT0 channel 0 interrupt request,
+ * sets the NVIC priority, and enables the interrupt line in NVIC.
+ *
+ * The LPIT peripheral interrupt enable bit is configured separately by
+ * LPIT_EnableInterrupt().
+ *
+ * @return None.
+ */
 void IRQ_LPIT0_Ch0_Init(void)
 {
-    NVIC_ICPR_BASE[LPIT0_CH0_IRQ_NUMBER / 32U] =
-        (1UL << (LPIT0_CH0_IRQ_NUMBER % 32U));
+    /*
+     * Clear any pending interrupt before enabling NVIC.
+     * This prevents entering the ISR immediately because of a stale
+     * pending interrupt flag.
+     */
+    NVIC_ICPR_BASE[IRQ_NVIC_REG_INDEX(LPIT0_CH0_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(LPIT0_CH0_IRQ_NUMBER);
 
+    /*
+     * Configure LPIT interrupt priority.
+     * The priority value is kept unchanged to avoid behavior changes.
+     */
     NVIC_IPR_BASE[LPIT0_CH0_IRQ_NUMBER] = LPIT0_CH0_PRIORITY;
 
-    NVIC_ISER_BASE[LPIT0_CH0_IRQ_NUMBER / 32U] =
-        (1UL << (LPIT0_CH0_IRQ_NUMBER % 32U));
+    /* Enable LPIT0 channel 0 interrupt in NVIC. */
+    NVIC_ISER_BASE[IRQ_NVIC_REG_INDEX(LPIT0_CH0_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(LPIT0_CH0_IRQ_NUMBER);
 }
 
-void IRQ_LPIT0_Ch0_SetCallback(irq_callback_t cb)
+/**
+ * @brief Register callback for LPIT0 channel 0 interrupt.
+ *
+ * @details
+ * The callback is executed by LPIT0_Ch0_IRQHandler() after the LPIT
+ * timeout flag is cleared.
+ *
+ * Passing a null callback disables callback execution.
+ *
+ * @param[in] pfCallback
+ * Pointer to callback function.
+ *
+ * @return None.
+ */
+void IRQ_LPIT0_Ch0_SetCallback(irq_callback_t pfCallback)
 {
-    s_lpit0Ch0Callback = cb;
+    s_pfLpit0Ch0Callback = pfCallback;
 }
 
 /* ============================================================
@@ -91,13 +189,31 @@ void IRQ_LPUART2_RxTx_Init(void)
  * ISR implementations
  * ============================================================ */
 
+/**
+ * @brief LPIT0 channel 0 interrupt service routine.
+ *
+ * @details
+ * This ISR clears the LPIT channel timeout flag first, then executes
+ * the registered callback if one is available.
+ *
+ * The callback is expected to be short because it runs in interrupt
+ * context. In the current time module, this callback increments the
+ * millisecond system tick.
+ *
+ * @return None.
+ */
 void LPIT0_Ch0_IRQHandler(void)
 {
+    /*
+     * Clear the LPIT timeout flag before executing user logic.
+     * This prevents the same interrupt event from being handled again
+     * after exiting the ISR.
+     */
     LPIT_ClearFlag(0U);
 
-    if (s_lpit0Ch0Callback != (irq_callback_t)0)
+    if ((irq_callback_t)0 != s_pfLpit0Ch0Callback)
     {
-        s_lpit0Ch0Callback();
+        s_pfLpit0Ch0Callback();
     }
 }
 
