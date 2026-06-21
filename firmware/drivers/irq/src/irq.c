@@ -8,15 +8,14 @@
  *
  * Clean status:
  * - LPIT0 channel 0 interrupt path has been cleaned.
- * - LPUART, ADC, and LPI2C interrupt paths are intentionally left mostly
- *   unchanged and should be cleaned in later module-specific cleanup steps.
+ * - LPUART1/LPUART2 RxTx interrupt path has been cleaned.
+ * - ADC and LPI2C interrupt paths are intentionally left mostly unchanged
+ *   and should be cleaned in later module-specific cleanup steps.
  *
- * LPIT clean scope:
- * - Added documentation for LPIT interrupt configuration and ISR.
- * - Renamed LPIT callback variable using project naming convention.
- * - Added NVIC helper macros for register index and interrupt bit mask.
- * - Applied constant-left condition style to LPIT callback check.
- * - Kept interrupt number, priority value, public API, and runtime behavior
+ * LPUART clean scope:
+ * - Added documentation for LPUART interrupt configuration and ISR.
+ * - Reused NVIC helper macros for register index and interrupt bit mask.
+ * - Kept interrupt numbers, priority values, public API, and runtime behavior
  *   unchanged.
  */
 
@@ -44,10 +43,30 @@
  */
 #define LPIT0_CH0_PRIORITY          (10U)
 
+/**
+ * @brief NVIC interrupt number for LPUART1 Rx/Tx interrupt.
+ */
 #define LPUART1_RXTX_IRQ_NUMBER     (33U)
+
+/**
+ * @brief NVIC priority value for LPUART1 Rx/Tx interrupt.
+ *
+ * @details
+ * The value is kept unchanged from the previous implementation.
+ */
 #define LPUART1_RXTX_PRIORITY       (10U)
 
+/**
+ * @brief NVIC interrupt number for LPUART2 Rx/Tx interrupt.
+ */
 #define LPUART2_RXTX_IRQ_NUMBER     (35U)
+
+/**
+ * @brief NVIC priority value for LPUART2 Rx/Tx interrupt.
+ *
+ * @details
+ * The value is kept unchanged from the previous implementation.
+ */
 #define LPUART2_RXTX_PRIORITY       (10U)
 
 #define ADC0_IRQ_NUMBER             (39U)
@@ -160,29 +179,73 @@ void IRQ_LPIT0_Ch0_SetCallback(irq_callback_t pfCallback)
 }
 
 /* ============================================================
- * LPUART IRQ config
+ * LPUART IRQ configuration
  * ============================================================ */
 
+/**
+ * @brief Initialize NVIC configuration for LPUART1 Rx/Tx interrupt.
+ *
+ * @details
+ * This function clears any pending LPUART1 Rx/Tx interrupt request,
+ * sets the NVIC priority, and enables the interrupt line in NVIC.
+ *
+ * The LPUART peripheral interrupt enable bit is configured separately by
+ * the LPUART driver.
+ *
+ * @return None.
+ */
 void IRQ_LPUART1_RxTx_Init(void)
 {
-    NVIC_ICPR_BASE[LPUART1_RXTX_IRQ_NUMBER / 32U] =
-        (1UL << (LPUART1_RXTX_IRQ_NUMBER % 32U));
+    /*
+     * Clear any pending interrupt before enabling NVIC.
+     * This avoids entering the ISR immediately because of a stale
+     * pending interrupt request.
+     */
+    NVIC_ICPR_BASE[IRQ_NVIC_REG_INDEX(LPUART1_RXTX_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(LPUART1_RXTX_IRQ_NUMBER);
 
+    /*
+     * Configure LPUART1 Rx/Tx interrupt priority.
+     * The priority value is kept unchanged to avoid behavior changes.
+     */
     NVIC_IPR_BASE[LPUART1_RXTX_IRQ_NUMBER] = LPUART1_RXTX_PRIORITY;
 
-    NVIC_ISER_BASE[LPUART1_RXTX_IRQ_NUMBER / 32U] =
-        (1UL << (LPUART1_RXTX_IRQ_NUMBER % 32U));
+    /* Enable LPUART1 Rx/Tx interrupt in NVIC. */
+    NVIC_ISER_BASE[IRQ_NVIC_REG_INDEX(LPUART1_RXTX_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(LPUART1_RXTX_IRQ_NUMBER);
 }
 
+/**
+ * @brief Initialize NVIC configuration for LPUART2 Rx/Tx interrupt.
+ *
+ * @details
+ * This function clears any pending LPUART2 Rx/Tx interrupt request,
+ * sets the NVIC priority, and enables the interrupt line in NVIC.
+ *
+ * The LPUART peripheral interrupt enable bit is configured separately by
+ * the LPUART driver.
+ *
+ * @return None.
+ */
 void IRQ_LPUART2_RxTx_Init(void)
 {
-    NVIC_ICPR_BASE[LPUART2_RXTX_IRQ_NUMBER / 32U] =
-        (1UL << (LPUART2_RXTX_IRQ_NUMBER % 32U));
+    /*
+     * Clear any pending interrupt before enabling NVIC.
+     * This avoids entering the ISR immediately because of a stale
+     * pending interrupt request.
+     */
+    NVIC_ICPR_BASE[IRQ_NVIC_REG_INDEX(LPUART2_RXTX_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(LPUART2_RXTX_IRQ_NUMBER);
 
+    /*
+     * Configure LPUART2 Rx/Tx interrupt priority.
+     * The priority value is kept unchanged to avoid behavior changes.
+     */
     NVIC_IPR_BASE[LPUART2_RXTX_IRQ_NUMBER] = LPUART2_RXTX_PRIORITY;
 
-    NVIC_ISER_BASE[LPUART2_RXTX_IRQ_NUMBER / 32U] =
-        (1UL << (LPUART2_RXTX_IRQ_NUMBER % 32U));
+    /* Enable LPUART2 Rx/Tx interrupt in NVIC. */
+    NVIC_ISER_BASE[IRQ_NVIC_REG_INDEX(LPUART2_RXTX_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(LPUART2_RXTX_IRQ_NUMBER);
 }
 
 /* ============================================================
@@ -217,18 +280,35 @@ void LPIT0_Ch0_IRQHandler(void)
     }
 }
 
+/**
+ * @brief LPUART1 Rx/Tx interrupt service routine.
+ *
+ * @details
+ * This ISR delegates interrupt processing to the LPUART driver.
+ * The driver is responsible for checking interrupt flags, reading
+ * received data, and storing it into the RX software buffer.
+ *
+ * @return None.
+ */
 void LPUART1_RxTx_IRQHandler(void)
 {
-    /* Delegate to driver */
     LPUART_IRQHandler(IP_LPUART1);
 }
 
+/**
+ * @brief LPUART2 Rx/Tx interrupt service routine.
+ *
+ * @details
+ * This ISR delegates interrupt processing to the LPUART driver.
+ * The driver is responsible for checking interrupt flags, reading
+ * received data, and storing it into the RX software buffer.
+ *
+ * @return None.
+ */
 void LPUART2_RxTx_IRQHandler(void)
 {
-    /* Delegate to driver */
     LPUART_IRQHandler(IP_LPUART2);
 }
-
 void IRQ_ADC0_Init(void)
 {
     NVIC_ICPR_BASE[ADC0_IRQ_NUMBER / 32U] =
