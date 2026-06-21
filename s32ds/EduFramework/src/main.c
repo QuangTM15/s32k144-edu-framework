@@ -1,7 +1,6 @@
 #include "Arduino.h"
 #include "S32K144.h"
-#include "uart_echo.h"
-#include "uart_led.h"
+#include "analog_full_demo.h"
 int main () {
-	Demo_UartEcho();
+	Demo_AnalogFull();
 }

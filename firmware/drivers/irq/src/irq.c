@@ -9,8 +9,9 @@
  * Clean status:
  * - LPIT0 channel 0 interrupt path has been cleaned.
  * - LPUART1/LPUART2 RxTx interrupt path has been cleaned.
- * - ADC and LPI2C interrupt paths are intentionally left mostly unchanged
- *   and should be cleaned in later module-specific cleanup steps.
+ * - ADC0 interrupt path has been cleaned for analog stack support.
+ * - LPI2C interrupt paths are intentionally left mostly unchanged and
+ *   should be cleaned in later module-specific cleanup steps.
  *
  * LPUART clean scope:
  * - Added documentation for LPUART interrupt configuration and ISR.
@@ -69,12 +70,33 @@
  */
 #define LPUART2_RXTX_PRIORITY       (10U)
 
+/**
+ * @brief NVIC interrupt number for ADC0 interrupt.
+ */
 #define ADC0_IRQ_NUMBER             (39U)
+
+/**
+ * @brief NVIC priority value for ADC0 interrupt.
+ *
+ * @details
+ * The value is kept unchanged from the previous implementation to avoid
+ * changing interrupt scheduling behavior during analog stack cleanup.
+ */
 #define ADC0_IRQ_PRIORITY           (0xA0U)
 
+/**
+ * @brief NVIC interrupt number for LPI2C0 master interrupt.
+ */
 #define LPI2C0_MASTER_IRQ_NUMBER    (24U)
+
+/**
+ * @brief NVIC priority value for LPI2C0 master interrupt.
+ */
 #define LPI2C0_MASTER_PRIORITY      (10U)
 
+/**
+ * @brief NVIC interrupt number for LPI2C0 slave interrupt.
+ */
 #define LPI2C0_SLAVE_IRQ_NUMBER     (25U)
 #define LPI2C0_SLAVE_PRIORITY       (10U)
 
@@ -309,17 +331,49 @@ void LPUART2_RxTx_IRQHandler(void)
 {
     LPUART_IRQHandler(IP_LPUART2);
 }
+/**
+ * @brief Initialize NVIC configuration for ADC0 interrupt.
+ *
+ * @details
+ * This function clears any pending ADC0 interrupt request, sets the NVIC
+ * priority, and enables the ADC0 interrupt line in NVIC.
+ *
+ * The ADC peripheral interrupt enable bit is configured separately by
+ * the ADC driver when a conversion is started.
+ *
+ * @return None.
+ */
 void IRQ_ADC0_Init(void)
 {
-    NVIC_ICPR_BASE[ADC0_IRQ_NUMBER / 32U] =
-        (1UL << (ADC0_IRQ_NUMBER % 32U));
+    /*
+     * Clear any pending ADC0 interrupt before enabling NVIC.
+     * This prevents a stale ADC conversion-complete request from causing
+     * an unexpected ISR entry immediately after initialization.
+     */
+    NVIC_ICPR_BASE[IRQ_NVIC_REG_INDEX(ADC0_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(ADC0_IRQ_NUMBER);
 
+    /*
+     * Configure ADC0 interrupt priority.
+     * The priority value is kept unchanged to avoid behavior changes.
+     */
     NVIC_IPR_BASE[ADC0_IRQ_NUMBER] = ADC0_IRQ_PRIORITY;
 
-    NVIC_ISER_BASE[ADC0_IRQ_NUMBER / 32U] =
-        (1UL << (ADC0_IRQ_NUMBER % 32U));
+    /* Enable ADC0 interrupt in NVIC. */
+    NVIC_ISER_BASE[IRQ_NVIC_REG_INDEX(ADC0_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(ADC0_IRQ_NUMBER);
 }
 
+/**
+ * @brief ADC0 interrupt service routine.
+ *
+ * @details
+ * This ISR delegates ADC0 interrupt processing to the ADC driver.
+ * The ADC driver checks the conversion-complete flag, reads the result
+ * register, and updates its internal conversion state.
+ *
+ * @return None.
+ */
 void ADC0_IRQHandler(void)
 {
     ADC_IRQHandler(IP_ADC_0);
