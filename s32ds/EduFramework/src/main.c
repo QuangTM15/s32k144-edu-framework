@@ -1,6 +1,7 @@
-#include "Arduino.h"
 #include "S32K144.h"
-#include "analog_full_demo.h"
+#include "Arduino.h"
+#include "spi_full_demo.h"
+
 int main () {
-	Demo_AnalogFull();
+	Demo_SPI_Full();
 }

@@ -5,7 +5,8 @@
  * ROLE SELECT
  * 1 = master, 0 = slave
  * ============================================================ */
-#define SPI_DEMO_IS_MASTER    1
+#define SPI_DEMO_IS_MASTER    0
+
 
 /* ============================================================
  * TEST CASE SELECT
@@ -14,7 +15,7 @@
 #define SPI_DEMO_CASE_16BIT   1
 #define SPI_DEMO_CASE_BUFFER  2
 
-#define SPI_DEMO_CASE         SPI_DEMO_CASE_BUFFER
+#define SPI_DEMO_CASE         1
 
 /* ============================================================
  * TEST DATA
