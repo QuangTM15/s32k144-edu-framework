@@ -1,7 +1,7 @@
-#include "S32K144.h"
+#include "S32k144.h"
 #include "Arduino.h"
-#include "spi_full_demo.h"
+#include "i2c_demo.h"
 
 int main () {
-	Demo_SPI_Full();
+	Demo_I2C();
 }
