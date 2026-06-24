@@ -25,15 +25,15 @@
 
 typedef uint8_t LPI2C_Status_t;
 
-#define LPI2C_STATUS_OK ((LPI2C_Status_t)0U)
-#define LPI2C_STATUS_BUSY ((LPI2C_Status_t)1U)
-#define LPI2C_STATUS_TIMEOUT ((LPI2C_Status_t)2U)
-#define LPI2C_STATUS_NACK ((LPI2C_Status_t)3U)
-#define LPI2C_STATUS_ARBITRATION_LOST ((LPI2C_Status_t)4U)
-#define LPI2C_STATUS_FIFO_ERROR ((LPI2C_Status_t)5U)
-#define LPI2C_STATUS_PIN_LOW_TIMEOUT ((LPI2C_Status_t)6U)
-#define LPI2C_STATUS_INVALID_ARGUMENT ((LPI2C_Status_t)7U)
-#define LPI2C_STATUS_ERROR ((LPI2C_Status_t)8U)
+#define LPI2C_STATUS_OK                    ((LPI2C_Status_t)0U)
+#define LPI2C_STATUS_BUSY                  ((LPI2C_Status_t)1U)
+#define LPI2C_STATUS_TIMEOUT               ((LPI2C_Status_t)2U)
+#define LPI2C_STATUS_NACK                  ((LPI2C_Status_t)3U)
+#define LPI2C_STATUS_ARBITRATION_LOST      ((LPI2C_Status_t)4U)
+#define LPI2C_STATUS_FIFO_ERROR            ((LPI2C_Status_t)5U)
+#define LPI2C_STATUS_PIN_LOW_TIMEOUT       ((LPI2C_Status_t)6U)
+#define LPI2C_STATUS_INVALID_ARGUMENT      ((LPI2C_Status_t)7U)
+#define LPI2C_STATUS_ERROR                 ((LPI2C_Status_t)8U)
 
 /* ============================================================
  * Speed
@@ -41,9 +41,9 @@ typedef uint8_t LPI2C_Status_t;
 
 typedef uint32_t LPI2C_Speed_t;
 
-#define LPI2C_SPEED_STANDARD ((LPI2C_Speed_t)100000U)
-#define LPI2C_SPEED_FAST ((LPI2C_Speed_t)400000U)
-#define LPI2C_SPEED_FASTPLUS ((LPI2C_Speed_t)1000000U)
+#define LPI2C_SPEED_STANDARD               ((LPI2C_Speed_t)100000U)
+#define LPI2C_SPEED_FAST                   ((LPI2C_Speed_t)400000U)
+#define LPI2C_SPEED_FASTPLUS               ((LPI2C_Speed_t)1000000U)
 
 /* ============================================================
  * Master Transfer Type
@@ -51,9 +51,9 @@ typedef uint32_t LPI2C_Speed_t;
 
 typedef uint8_t LPI2C_TransferType_t;
 
-#define LPI2C_TRANSFER_WRITE ((LPI2C_TransferType_t)0U)
-#define LPI2C_TRANSFER_READ ((LPI2C_TransferType_t)1U)
-#define LPI2C_TRANSFER_WRITE_READ ((LPI2C_TransferType_t)2U)
+#define LPI2C_TRANSFER_WRITE               ((LPI2C_TransferType_t)0U)
+#define LPI2C_TRANSFER_READ                ((LPI2C_TransferType_t)1U)
+#define LPI2C_TRANSFER_WRITE_READ          ((LPI2C_TransferType_t)2U)
 
 /* ============================================================
  * Master State
@@ -61,13 +61,13 @@ typedef uint8_t LPI2C_TransferType_t;
 
 typedef uint8_t LPI2C_MasterState_t;
 
-#define LPI2C_MASTER_STATE_IDLE ((LPI2C_MasterState_t)0U)
-#define LPI2C_MASTER_STATE_START ((LPI2C_MasterState_t)1U)
-#define LPI2C_MASTER_STATE_SEND ((LPI2C_MasterState_t)2U)
-#define LPI2C_MASTER_STATE_RECEIVE ((LPI2C_MasterState_t)3U)
-#define LPI2C_MASTER_STATE_STOP ((LPI2C_MasterState_t)4U)
-#define LPI2C_MASTER_STATE_DONE ((LPI2C_MasterState_t)5U)
-#define LPI2C_MASTER_STATE_ERROR ((LPI2C_MasterState_t)6U)
+#define LPI2C_MASTER_STATE_IDLE            ((LPI2C_MasterState_t)0U)
+#define LPI2C_MASTER_STATE_START           ((LPI2C_MasterState_t)1U)
+#define LPI2C_MASTER_STATE_SEND            ((LPI2C_MasterState_t)2U)
+#define LPI2C_MASTER_STATE_RECEIVE         ((LPI2C_MasterState_t)3U)
+#define LPI2C_MASTER_STATE_STOP            ((LPI2C_MasterState_t)4U)
+#define LPI2C_MASTER_STATE_DONE            ((LPI2C_MasterState_t)5U)
+#define LPI2C_MASTER_STATE_ERROR           ((LPI2C_MasterState_t)6U)
 
 /* ============================================================
  * Slave Event
@@ -75,12 +75,12 @@ typedef uint8_t LPI2C_MasterState_t;
 
 typedef uint8_t LPI2C_SlaveEvent_t;
 
-#define LPI2C_SLAVE_EVENT_ADDRESS_MATCH ((LPI2C_SlaveEvent_t)0U)
-#define LPI2C_SLAVE_EVENT_RX_DATA ((LPI2C_SlaveEvent_t)1U)
-#define LPI2C_SLAVE_EVENT_TX_REQUEST ((LPI2C_SlaveEvent_t)2U)
-#define LPI2C_SLAVE_EVENT_STOP ((LPI2C_SlaveEvent_t)3U)
-#define LPI2C_SLAVE_EVENT_REPEATED_START ((LPI2C_SlaveEvent_t)4U)
-#define LPI2C_SLAVE_EVENT_ERROR ((LPI2C_SlaveEvent_t)5U)
+#define LPI2C_SLAVE_EVENT_ADDRESS_MATCH    ((LPI2C_SlaveEvent_t)0U)
+#define LPI2C_SLAVE_EVENT_RX_DATA          ((LPI2C_SlaveEvent_t)1U)
+#define LPI2C_SLAVE_EVENT_TX_REQUEST       ((LPI2C_SlaveEvent_t)2U)
+#define LPI2C_SLAVE_EVENT_STOP             ((LPI2C_SlaveEvent_t)3U)
+#define LPI2C_SLAVE_EVENT_REPEATED_START   ((LPI2C_SlaveEvent_t)4U)
+#define LPI2C_SLAVE_EVENT_ERROR            ((LPI2C_SlaveEvent_t)5U)
 
 /* ============================================================
  * Master Configuration
@@ -95,13 +95,13 @@ typedef uint8_t LPI2C_SlaveEvent_t;
  */
 typedef struct
 {
-    uint32_t srcClockHz; /**< LPI2C functional clock in Hz. */
-    uint32_t baudRate;   /**< Target I2C bus speed in Hz. */
+    uint32_t srcClockHz;     /**< LPI2C functional clock in Hz. */
+    uint32_t baudRate;       /**< Target I2C bus speed in Hz. */
 
-    bool enableDebug; /**< Keep module running in debug mode when true. */
-    bool enableDoze;  /**< Keep module running in doze mode when true. */
+    bool enableDebug;        /**< Keep module running in debug mode when true. */
+    bool enableDoze;         /**< Keep module running in doze mode when true. */
 
-    uint32_t timeout; /**< Default timeout count for blocking operations. */
+    uint32_t timeout;        /**< Default timeout count for blocking operations. */
 } LPI2C_MasterConfig_t;
 
 /* ============================================================
@@ -117,17 +117,17 @@ typedef struct
  */
 typedef struct
 {
-    uint8_t slaveAddress; /**< 7-bit slave address. */
+    uint8_t slaveAddress;            /**< 7-bit slave address. */
 
-    const uint8_t *txData; /**< Pointer to transmit buffer. */
-    uint16_t txSize;       /**< Number of bytes to transmit. */
+    const uint8_t *txData;           /**< Pointer to transmit buffer. */
+    uint16_t txSize;                 /**< Number of bytes to transmit. */
 
-    uint8_t *rxData; /**< Pointer to receive buffer. */
-    uint16_t rxSize; /**< Number of bytes to receive. */
+    uint8_t *rxData;                 /**< Pointer to receive buffer. */
+    uint16_t rxSize;                 /**< Number of bytes to receive. */
 
-    LPI2C_TransferType_t type; /**< Transfer type: write, read, or write-read. */
+    LPI2C_TransferType_t type;       /**< Transfer type: write, read, or write-read. */
 
-    bool sendStop; /**< Send STOP condition at the end when true. */
+    bool sendStop;                   /**< Send STOP condition at the end when true. */
 } LPI2C_MasterTransfer_t;
 
 /* ============================================================
@@ -143,15 +143,15 @@ typedef struct
  */
 typedef struct
 {
-    LPI2C_MasterTransfer_t transfer; /**< Current transfer descriptor. */
+    LPI2C_MasterTransfer_t transfer;  /**< Current transfer descriptor. */
 
-    LPI2C_MasterState_t state; /**< Current master interrupt state. */
-    LPI2C_Status_t status;     /**< Current transfer status. */
+    LPI2C_MasterState_t state;        /**< Current master interrupt state. */
+    LPI2C_Status_t status;            /**< Current transfer status. */
 
-    uint16_t txCount; /**< Number of transmitted bytes. */
-    uint16_t rxCount; /**< Number of received bytes. */
+    uint16_t txCount;                 /**< Number of transmitted bytes. */
+    uint16_t rxCount;                 /**< Number of received bytes. */
 
-    bool rxCommandSent; /**< Internal flag for receive command stage. */
+    bool rxCommandSent;               /**< Internal flag for receive command stage. */
 } LPI2C_MasterHandle_t;
 
 /* ============================================================
@@ -174,14 +174,14 @@ typedef void (*LPI2C_SlaveCallback_t)(LPI2C_Type *base,
  */
 typedef struct
 {
-    uint8_t slaveAddress; /**< 7-bit slave address. */
+    uint8_t slaveAddress;             /**< 7-bit slave address. */
 
-    bool enableGeneralCall;     /**< Enable general call address response when true. */
-    bool enableClockStretching; /**< Enable clock stretching when true. */
-    bool enableFilter;          /**< Enable digital input filter when true. */
+    bool enableGeneralCall;           /**< Enable general call address response when true. */
+    bool enableClockStretching;       /**< Enable clock stretching when true. */
+    bool enableFilter;                /**< Enable digital input filter when true. */
 
-    LPI2C_SlaveCallback_t callback; /**< Callback invoked from slave IRQ handler. */
-    void *userData;                 /**< User data passed to callback. */
+    LPI2C_SlaveCallback_t callback;   /**< Callback invoked from slave IRQ handler. */
+    void *userData;                   /**< User data passed to callback. */
 } LPI2C_SlaveConfig_t;
 
 /* ============================================================

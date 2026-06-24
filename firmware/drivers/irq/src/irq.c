@@ -26,6 +26,7 @@
 #include "lpuart.h"
 #include "adc.h"
 #include "lpi2c.h"
+#include <stddef.h>
 
 /* ============================================================
  * IRQ numbers and priorities
@@ -142,7 +143,7 @@
 /**
  * @brief Callback executed from LPIT0 channel 0 interrupt context.
  */
-static irq_callback_t s_pfLpit0Ch0Callback = (irq_callback_t)0;
+static irq_callback_t s_pfLpit0Ch0Callback = NULL;
 
 /* ============================================================
  * LPIT IRQ configuration
@@ -296,7 +297,7 @@ void LPIT0_Ch0_IRQHandler(void)
      */
     LPIT_ClearFlag(0U);
 
-    if ((irq_callback_t)0 != s_pfLpit0Ch0Callback)
+    if (NULL != s_pfLpit0Ch0Callback)
     {
         s_pfLpit0Ch0Callback();
     }
@@ -383,33 +384,94 @@ void ADC0_IRQHandler(void)
  * LPI2C IRQ config
  * ============================================================ */
 
+/* ============================================================
+ * LPI2C IRQ configuration
+ * ============================================================ */
+
+/**
+ * @brief Initialize NVIC configuration for LPI2C0 master interrupt.
+ *
+ * @details
+ * This function clears any pending LPI2C0 master interrupt request,
+ * configures the interrupt priority, and enables the interrupt line
+ * in the NVIC.
+ *
+ * The LPI2C master interrupt sources are configured separately by
+ * the LPI2C driver.
+ *
+ * @return None.
+ */
 void IRQ_LPI2C0_Master_Init(void)
 {
-    NVIC_ICPR_BASE[LPI2C0_MASTER_IRQ_NUMBER / 32U] =
-        (1UL << (LPI2C0_MASTER_IRQ_NUMBER % 32U));
+    NVIC_ICPR_BASE[IRQ_NVIC_REG_INDEX(LPI2C0_MASTER_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(LPI2C0_MASTER_IRQ_NUMBER);
 
-    NVIC_IPR_BASE[LPI2C0_MASTER_IRQ_NUMBER] = LPI2C0_MASTER_PRIORITY;
+    NVIC_IPR_BASE[LPI2C0_MASTER_IRQ_NUMBER] =
+        LPI2C0_MASTER_PRIORITY;
 
-    NVIC_ISER_BASE[LPI2C0_MASTER_IRQ_NUMBER / 32U] =
-        (1UL << (LPI2C0_MASTER_IRQ_NUMBER % 32U));
+    NVIC_ISER_BASE[IRQ_NVIC_REG_INDEX(LPI2C0_MASTER_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(LPI2C0_MASTER_IRQ_NUMBER);
 }
 
+/**
+ * @brief LPI2C0 master interrupt service routine.
+ *
+ * @details
+ * This ISR delegates interrupt processing to the LPI2C driver.
+ *
+ * The driver handles:
+ * - Master transmit state machine
+ * - Master receive state machine
+ * - Transfer completion
+ * - Error handling
+ *
+ * @return None.
+ */
 void LPI2C0_Master_IRQHandler(void)
 {
     LPI2C_MasterIRQHandler(IP_LPI2C0);
 }
 
+/**
+ * @brief Initialize NVIC configuration for LPI2C0 slave interrupt.
+ *
+ * @details
+ * This function clears any pending LPI2C0 slave interrupt request,
+ * configures the interrupt priority, and enables the interrupt line
+ * in the NVIC.
+ *
+ * The LPI2C slave interrupt sources are configured separately by
+ * the LPI2C driver.
+ *
+ * @return None.
+ */
 void IRQ_LPI2C0_Slave_Init(void)
 {
-    NVIC_ICPR_BASE[LPI2C0_SLAVE_IRQ_NUMBER / 32U] =
-        (1UL << (LPI2C0_SLAVE_IRQ_NUMBER % 32U));
+    NVIC_ICPR_BASE[IRQ_NVIC_REG_INDEX(LPI2C0_SLAVE_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(LPI2C0_SLAVE_IRQ_NUMBER);
 
-    NVIC_IPR_BASE[LPI2C0_SLAVE_IRQ_NUMBER] = LPI2C0_SLAVE_PRIORITY;
+    NVIC_IPR_BASE[LPI2C0_SLAVE_IRQ_NUMBER] =
+        LPI2C0_SLAVE_PRIORITY;
 
-    NVIC_ISER_BASE[LPI2C0_SLAVE_IRQ_NUMBER / 32U] =
-        (1UL << (LPI2C0_SLAVE_IRQ_NUMBER % 32U));
+    NVIC_ISER_BASE[IRQ_NVIC_REG_INDEX(LPI2C0_SLAVE_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(LPI2C0_SLAVE_IRQ_NUMBER);
 }
 
+/**
+ * @brief LPI2C0 slave interrupt service routine.
+ *
+ * @details
+ * This ISR delegates interrupt processing to the LPI2C slave driver.
+ *
+ * The driver handles:
+ * - Address match detection
+ * - Slave receive events
+ * - Slave transmit requests
+ * - STOP detection
+ * - Error conditions
+ *
+ * @return None.
+ */
 void LPI2C0_Slave_IRQHandler(void)
 {
     LPI2C_SlaveIRQHandler(IP_LPI2C0);
