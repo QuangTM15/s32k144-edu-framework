@@ -1,0 +1,14 @@
+{
+  "name": "framework-eduframework-s32k144",
+  "version": "0.2.0",
+  "description": "EduFramework Arduino-style framework for NXP S32K144",
+  "keywords": [
+    "framework",
+    "s32k144",
+    "maazedu",
+    "arduino-style",
+    "bare-metal"
+  ],
+  "homepage": "https://github.com/QuangTM15/s32k144-edu-framework",
+  "license": "MIT"
+}
