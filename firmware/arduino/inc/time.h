@@ -89,5 +89,33 @@ void delay(uint32_t u32Ms);
  * @return None.
  */
 void Time_SetCallback(time_callback_t pfCallback);
+/**
+ * @brief Blocking delay in microseconds.
+ *
+ * @details
+ * This function uses LPIT channel 1 as a one-shot polling timer.
+ * It is intended for short timing operations such as ultrasonic trigger pulses.
+ *
+ * This function should not be called inside interrupt service routines.
+ *
+ * @param[in] u32Us
+ * Delay duration in microseconds.
+ *
+ * @return None.
+ */
+void delayMicroseconds(uint32_t u32Us);
+
+/**
+ * @brief Get elapsed time in microseconds.
+ *
+ * @details
+ * This function returns an approximate microsecond timestamp based on
+ * the LPIT channel 0 system time base.
+ *
+ * @return uint32_t
+ * Elapsed time in microseconds.
+ */
+uint32_t micros(void);
+
 
 #endif /* ARDUINO_TIME_H */
