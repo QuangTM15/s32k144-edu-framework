@@ -6,40 +6,28 @@
  * @brief Arduino-style HC-SR04 ultrasonic sensor library for EduFramework.
  *
  * @details
- * This module provides a beginner-friendly API for the HC-SR04 ultrasonic
- * distance sensor.
+ * This module provides a beginner-friendly device API for the HC-SR04
+ * ultrasonic distance sensor.
  *
- * The device library belongs to the Device Layer:
+ * The ultrasonic device library belongs to the Device Layer:
  *
  * Application / Example
- *        ↓
+ *        |
+ *        v
  * Device Library
- *        ↓
+ *        |
+ *        v
  * Arduino-style API
- *        ↓
+ *        |
+ *        v
  * Low-level Drivers
- *        ↓
+ *        |
+ *        v
  * Hardware
  *
  * This module does not access MCU registers directly. It uses only
  * Arduino-style APIs such as pinMode(), digitalWrite(), digitalRead(),
- * delay(), and delayMicroseconds().
- *
- * Two API styles are provided:
- *
- * 1. Arduino-like simple API:
- *    - ultrasonicBegin()
- *    - ultrasonicRead()
- *    - ultrasonicReadFiltered()
- *
- * 2. Multi-instance API:
- *    - Ultrasonic_Begin()
- *    - Ultrasonic_ReadCm()
- *    - Ultrasonic_ReadCmFiltered()
- *
- * The simple API is recommended for beginner examples using one sensor.
- * The multi-instance API is used when more than one ultrasonic sensor is
- * required.
+ * delay(), delayMicroseconds(), and micros().
  */
 
 #include <stdint.h>
@@ -52,29 +40,31 @@
  * @brief Default echo timeout in microseconds.
  *
  * @details
- * A timeout is required because the ECHO pin may never become HIGH or may
- * never return LOW if the sensor is disconnected or no echo is received.
- *
- * 30000 us is commonly used for HC-SR04 examples and is suitable for
- * educational distance measurement.
+ * The timeout prevents the program from blocking forever when:
+ * - The sensor is disconnected.
+ * - No object is detected.
+ * - The ECHO pin never becomes HIGH.
+ * - The ECHO pin never returns LOW.
  */
-#define ULTRASONIC_DEFAULT_TIMEOUT_US       (30000U)
+#define ULTRASONIC_DEFAULT_TIMEOUT_US (30000U)
 
 /**
  * @brief Default number of samples used by ultrasonicReadFiltered().
+ *
+ * @details
+ * The default filtered read collects 20 samples, sorts them, removes noisy
+ * low-end and high-end samples, then averages the middle samples.
  */
-#define ULTRASONIC_DEFAULT_FILTER_SAMPLES   (20U)
+#define ULTRASONIC_DEFAULT_FILTER_SAMPLES (20U)
 
 /**
  * @brief Invalid distance value in centimeters.
  *
  * @details
- * Distance read APIs return this value when:
- * - Sensor pointer is invalid.
- * - Echo pulse is not detected.
- * - Echo pulse measurement times out.
+ * Distance read functions return this value when a valid echo pulse cannot
+ * be measured.
  */
-#define ULTRASONIC_INVALID_DISTANCE_CM      (-1.0f)
+#define ULTRASONIC_INVALID_DISTANCE_CM (-1.0f)
 
 /* ========================================================================= */
 /* Public Types                                                               */
@@ -84,10 +74,10 @@
  * @brief HC-SR04 ultrasonic sensor object.
  *
  * @details
- * This object stores all configuration data required by one ultrasonic
- * sensor instance.
+ * This object stores the logical TRIG pin, logical ECHO pin, and timeout
+ * value for one ultrasonic sensor instance.
  *
- * The pins are logical EduFramework/Arduino-style pins, not raw MCU pins.
+ * The pins are EduFramework logical pins, not raw MCU port/pin numbers.
  */
 typedef struct
 {
@@ -102,7 +92,7 @@ typedef struct
     uint8_t echoPin;
 
     /**
-     * @brief Echo wait timeout in microseconds.
+     * @brief Echo measurement timeout in microseconds.
      */
     uint32_t timeoutUs;
 
@@ -116,8 +106,8 @@ typedef struct
  * @brief Initialize the default ultrasonic sensor.
  *
  * @details
- * This function is intentionally similar to Arduino-style device APIs.
- * It is intended for simple examples using one HC-SR04 sensor.
+ * This API is intended for simple applications using one HC-SR04 sensor.
+ * It configures the TRIG pin as output and the ECHO pin as input.
  *
  * @param[in] trigPin
  * Logical pin connected to TRIG.
@@ -131,7 +121,7 @@ void ultrasonicBegin(uint8_t trigPin,
                      uint8_t echoPin);
 
 /**
- * @brief Set echo timeout for the default ultrasonic sensor.
+ * @brief Set timeout for the default ultrasonic sensor.
  *
  * @param[in] timeoutUs
  * Timeout value in microseconds.
@@ -143,6 +133,10 @@ void ultrasonicSetTimeout(uint32_t timeoutUs);
 /**
  * @brief Read echo pulse duration from the default ultrasonic sensor.
  *
+ * @details
+ * This function sends a trigger pulse and measures how long the ECHO pin
+ * stays HIGH.
+ *
  * @return uint32_t
  * Echo pulse duration in microseconds.
  *
@@ -152,13 +146,17 @@ void ultrasonicSetTimeout(uint32_t timeoutUs);
 uint32_t ultrasonicReadDuration(void);
 
 /**
- * @brief Read distance from the default ultrasonic sensor.
+ * @brief Read distance in centimeters from the default ultrasonic sensor.
  *
  * @details
- * This function returns distance in centimeters by default.
+ * This is the main beginner-friendly read API. It returns distance in
+ * centimeters by default.
  *
  * @return float
- * Distance in centimeters, or ULTRASONIC_INVALID_DISTANCE_CM on timeout.
+ * Distance in centimeters.
+ *
+ * @retval ULTRASONIC_INVALID_DISTANCE_CM
+ * Timeout or invalid measurement.
  */
 float ultrasonicRead(void);
 
@@ -166,19 +164,28 @@ float ultrasonicRead(void);
  * @brief Read distance in inches from the default ultrasonic sensor.
  *
  * @return float
- * Distance in inches, or ULTRASONIC_INVALID_DISTANCE_CM on timeout.
+ * Distance in inches.
+ *
+ * @retval ULTRASONIC_INVALID_DISTANCE_CM
+ * Timeout or invalid measurement.
  */
 float ultrasonicReadInch(void);
 
 /**
- * @brief Read filtered distance from the default ultrasonic sensor.
+ * @brief Read filtered distance in centimeters from the default sensor.
  *
  * @details
- * This function collects multiple samples, sorts them, removes the smallest
- * and largest noisy groups, then averages the middle samples.
+ * This function uses an internal static sample buffer. It is simple to use,
+ * but it is intended for one default sensor only.
+ *
+ * For multi-sensor applications, use Ultrasonic_ReadCmFiltered() with a
+ * user-provided buffer.
  *
  * @return float
- * Filtered distance in centimeters, or ULTRASONIC_INVALID_DISTANCE_CM.
+ * Filtered distance in centimeters.
+ *
+ * @retval ULTRASONIC_INVALID_DISTANCE_CM
+ * Timeout or invalid measurement.
  */
 float ultrasonicReadFiltered(void);
 
@@ -189,8 +196,11 @@ float ultrasonicReadFiltered(void);
 /**
  * @brief Initialize an ultrasonic sensor instance.
  *
+ * @details
+ * This API is used when an application needs more than one HC-SR04 sensor.
+ *
  * @param[in,out] sensor
- * Pointer to ultrasonic sensor object.
+ * Pointer to an ultrasonic sensor object.
  *
  * @param[in] trigPin
  * Logical pin connected to TRIG.
@@ -208,7 +218,7 @@ void Ultrasonic_Begin(Ultrasonic_t *sensor,
  * @brief Set timeout for an ultrasonic sensor instance.
  *
  * @param[in,out] sensor
- * Pointer to ultrasonic sensor object.
+ * Pointer to an ultrasonic sensor object.
  *
  * @param[in] timeoutUs
  * Timeout value in microseconds.
@@ -219,55 +229,71 @@ void Ultrasonic_SetTimeout(Ultrasonic_t *sensor,
                            uint32_t timeoutUs);
 
 /**
- * @brief Read echo pulse duration in microseconds.
+ * @brief Read echo pulse duration from an ultrasonic sensor instance.
  *
  * @param[in] sensor
- * Pointer to ultrasonic sensor object.
+ * Pointer to an ultrasonic sensor object.
  *
  * @return uint32_t
  * Echo pulse duration in microseconds.
  *
  * @retval 0U
- * Timeout or invalid measurement.
+ * Timeout, invalid sensor pointer, or invalid measurement.
  */
 uint32_t Ultrasonic_ReadDurationUs(Ultrasonic_t *sensor);
 
 /**
- * @brief Read distance in centimeters.
+ * @brief Read distance in centimeters from an ultrasonic sensor instance.
  *
  * @param[in] sensor
- * Pointer to ultrasonic sensor object.
+ * Pointer to an ultrasonic sensor object.
  *
  * @return float
- * Distance in centimeters, or ULTRASONIC_INVALID_DISTANCE_CM.
+ * Distance in centimeters.
+ *
+ * @retval ULTRASONIC_INVALID_DISTANCE_CM
+ * Timeout, invalid sensor pointer, or invalid measurement.
  */
 float Ultrasonic_ReadCm(Ultrasonic_t *sensor);
 
 /**
- * @brief Read distance in inches.
+ * @brief Read distance in inches from an ultrasonic sensor instance.
  *
  * @param[in] sensor
- * Pointer to ultrasonic sensor object.
+ * Pointer to an ultrasonic sensor object.
  *
  * @return float
- * Distance in inches, or ULTRASONIC_INVALID_DISTANCE_CM.
+ * Distance in inches.
+ *
+ * @retval ULTRASONIC_INVALID_DISTANCE_CM
+ * Timeout, invalid sensor pointer, or invalid measurement.
  */
 float Ultrasonic_ReadInch(Ultrasonic_t *sensor);
 
 /**
- * @brief Read filtered distance in centimeters.
+ * @brief Read filtered distance in centimeters from an ultrasonic sensor.
+ *
+ * @details
+ * This function collects multiple samples into the user-provided buffer,
+ * sorts the samples, removes noisy low-end and high-end samples, and returns
+ * the average of the middle samples.
+ *
+ * The buffer must have at least sampleCount elements.
  *
  * @param[in] sensor
- * Pointer to ultrasonic sensor object.
+ * Pointer to an ultrasonic sensor object.
  *
  * @param[in,out] buffer
- * Buffer used to store distance samples.
+ * Sample buffer provided by the caller.
  *
  * @param[in] sampleCount
  * Number of samples to collect.
  *
  * @return float
- * Filtered distance in centimeters, or ULTRASONIC_INVALID_DISTANCE_CM.
+ * Filtered distance in centimeters.
+ *
+ * @retval ULTRASONIC_INVALID_DISTANCE_CM
+ * Invalid input, timeout, or no valid samples.
  */
 float Ultrasonic_ReadCmFiltered(Ultrasonic_t *sensor,
                                 float *buffer,

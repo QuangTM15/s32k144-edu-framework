@@ -3,24 +3,37 @@
  * @brief Arduino-style HC-SR04 ultrasonic sensor library implementation.
  *
  * @details
- * This file implements the HC-SR04 ultrasonic sensor library for
- * EduFramework.
+ * This module implements the HC-SR04 ultrasonic sensor device library.
  *
- * The HC-SR04 measurement sequence is:
+ * Measurement sequence:
  *
  * 1. Drive TRIG LOW briefly.
- * 2. Drive TRIG HIGH for 10 microseconds.
+ * 2. Drive TRIG HIGH for at least 10 us.
  * 3. Drive TRIG LOW again.
  * 4. Wait for ECHO to become HIGH.
  * 5. Measure how long ECHO remains HIGH.
- * 6. Convert pulse duration to distance.
+ * 6. Convert echo duration to distance.
  *
- * Distance calculation:
+ * Distance formula:
  *
  * distance_cm = duration_us * 0.017
  *
- * The 0.017 factor is commonly used in Arduino examples because sound travels
- * from the sensor to the object and then back to the sensor.
+ * The factor 0.017 is approximately speed_of_sound_cm_per_us / 2.
+ * The division by 2 is required because the sound wave travels from
+ * sensor to object and then returns back to the sensor.
+ *
+ * Calibration notes:
+ *
+ * If the measured distance is consistently too high or too low, tune:
+ *
+ * - ULTRASONIC_CM_PER_US
+ *   Main distance conversion factor.
+ *
+ * If readings are noisy, tune:
+ *
+ * - ULTRASONIC_DEFAULT_FILTER_SAMPLES in ultrasonic.h
+ * - ULTRASONIC_FILTER_SAMPLE_DELAY_MS
+ * - ULTRASONIC_MAX_REMOVE_EACH_SIDE
  *
  * This module belongs to the Device Layer and must not access S32K144
  * registers directly.
@@ -35,43 +48,74 @@
 /* ========================================================================= */
 
 /**
- * @brief Required trigger pulse width for HC-SR04 in microseconds.
- */
-#define ULTRASONIC_TRIGGER_PULSE_US (10U)
-
-/**
- * @brief Small pre-trigger low time in microseconds.
+ * @brief Pre-trigger LOW time in microseconds.
  *
  * @details
- * Pulling TRIG LOW before the trigger pulse helps ensure a clean trigger.
+ * This value ensures the TRIG signal starts from a stable LOW level before
+ * generating the HIGH trigger pulse.
+ *
+ * Adjustable:
+ * Normally this value does not need tuning.
  */
 #define ULTRASONIC_PRE_TRIGGER_LOW_US (2U)
 
 /**
- * @brief Delay between filtered measurement samples in milliseconds.
+ * @brief HC-SR04 trigger pulse width in microseconds.
  *
  * @details
- * Ultrasonic waves may reflect and interfere with later measurements.
- * A delay between samples helps reduce measurement interference.
+ * HC-SR04 requires a HIGH pulse of at least 10 us on TRIG.
+ *
+ * Adjustable:
+ * Keep this value at 10 us or slightly higher. Do not reduce it below 10 us.
+ */
+#define ULTRASONIC_TRIGGER_PULSE_US (10U)
+
+/**
+ * @brief Delay between filtered samples in milliseconds.
+ *
+ * @details
+ * Ultrasonic sensors need a short gap between measurements because previous
+ * sound reflections may interfere with the next measurement.
+ *
+ * Adjustable:
+ * Increase this value if filtered readings are unstable.
  */
 #define ULTRASONIC_FILTER_SAMPLE_DELAY_MS (30U)
 
 /**
- * @brief Maximum number of samples removed from each side of sorted data.
+ * @brief Maximum number of samples removed from each side after sorting.
  *
  * @details
- * For 20 samples, the filter removes 5 smallest and 5 largest samples,
- * then averages the 10 middle samples.
+ * With 20 samples, the filter removes 5 smallest and 5 largest samples,
+ * then averages the middle 10 samples.
+ *
+ * Adjustable:
+ * Increase remove count for stronger noise rejection, but too much removal
+ * may reduce responsiveness.
  */
 #define ULTRASONIC_MAX_REMOVE_EACH_SIDE (5U)
 
 /**
- * @brief Conversion factor from echo duration to centimeters.
+ * @brief Distance conversion factor from echo duration to centimeters.
+ *
+ * @details
+ * Common HC-SR04 Arduino examples use:
+ *
+ * distance_cm = duration_us * 0.017
+ *
+ * Adjustable:
+ * This is the main calibration constant.
+ *
+ * If measured distance is always smaller than real distance, increase this
+ * value slightly.
+ *
+ * If measured distance is always larger than real distance, decrease this
+ * value slightly.
  */
 #define ULTRASONIC_CM_PER_US (0.017f)
 
 /**
- * @brief Conversion factor from centimeters to inches.
+ * @brief Distance conversion factor from centimeters to inches.
  */
 #define ULTRASONIC_INCH_PER_CM (0.3937008f)
 
@@ -80,7 +124,7 @@
 /* ========================================================================= */
 
 /**
- * @brief Default ultrasonic sensor object used by the Arduino-like API.
+ * @brief Default sensor object used by the Arduino-like API.
  */
 static Ultrasonic_t g_stDefaultUltrasonic =
     {
@@ -89,7 +133,7 @@ static Ultrasonic_t g_stDefaultUltrasonic =
         ULTRASONIC_DEFAULT_TIMEOUT_US};
 
 /**
- * @brief Internal sample buffer used by ultrasonicReadFiltered().
+ * @brief Default filter buffer used by ultrasonicReadFiltered().
  */
 static float g_f32DefaultFilterBuffer[ULTRASONIC_DEFAULT_FILTER_SAMPLES];
 
@@ -99,6 +143,10 @@ static float g_f32DefaultFilterBuffer[ULTRASONIC_DEFAULT_FILTER_SAMPLES];
 
 static uint8_t Ultrasonic_IsValidSensor(Ultrasonic_t *sensor);
 static void Ultrasonic_SendTriggerPulse(Ultrasonic_t *sensor);
+static uint8_t Ultrasonic_WaitEchoHigh(Ultrasonic_t *sensor,
+                                       uint32_t *pu32EchoStartUs);
+static uint32_t Ultrasonic_MeasureEchoHigh(Ultrasonic_t *sensor,
+                                           uint32_t u32EchoStartUs);
 static void Ultrasonic_SortAscending(float *buffer,
                                      uint8_t sampleCount);
 static float Ultrasonic_AverageMiddleSamples(float *buffer,
@@ -109,7 +157,7 @@ static float Ultrasonic_AverageMiddleSamples(float *buffer,
 /* ========================================================================= */
 
 /**
- * @brief Check whether a sensor object pointer is valid.
+ * @brief Check whether sensor pointer is valid.
  *
  * @param[in] sensor
  * Pointer to ultrasonic sensor object.
@@ -135,11 +183,11 @@ static uint8_t Ultrasonic_IsValidSensor(Ultrasonic_t *sensor)
 }
 
 /**
- * @brief Generate HC-SR04 trigger pulse.
+ * @brief Send HC-SR04 trigger pulse.
  *
  * @details
- * The HC-SR04 starts a measurement when TRIG receives a HIGH pulse
- * of at least 10 microseconds.
+ * The sensor starts one measurement cycle when TRIG receives a HIGH pulse
+ * of at least 10 us.
  *
  * @param[in] sensor
  * Pointer to ultrasonic sensor object.
@@ -158,17 +206,110 @@ static void Ultrasonic_SendTriggerPulse(Ultrasonic_t *sensor)
 }
 
 /**
- * @brief Sort float samples in ascending order.
+ * @brief Wait for ECHO pin to become HIGH.
  *
  * @details
- * This function uses a simple nested-loop sort instead of a more complex
- * algorithm. The goal is readability for students.
+ * This function waits for the rising edge of the ECHO pulse. If ECHO does
+ * not become HIGH before timeout, the measurement is invalid.
+ *
+ * @param[in] sensor
+ * Pointer to ultrasonic sensor object.
+ *
+ * @param[out] pu32EchoStartUs
+ * Timestamp in microseconds when ECHO becomes HIGH.
+ *
+ * @return uint8_t
+ *
+ * @retval 0U
+ * ECHO rising edge was not detected before timeout.
+ *
+ * @retval 1U
+ * ECHO rising edge was detected.
+ */
+static uint8_t Ultrasonic_WaitEchoHigh(Ultrasonic_t *sensor,
+                                       uint32_t *pu32EchoStartUs)
+{
+    uint32_t u32WaitStartUs = 0U;
+    uint8_t u8EchoDetected = 0U;
+
+    if (((Ultrasonic_t *)0 != sensor) &&
+        ((uint32_t *)0 != pu32EchoStartUs))
+    {
+        u32WaitStartUs = micros();
+
+        while ((false == digitalRead(sensor->echoPin)) &&
+               ((micros() - u32WaitStartUs) < sensor->timeoutUs))
+        {
+            /* Busy wait for ECHO rising edge. */
+        }
+
+        if ((micros() - u32WaitStartUs) < sensor->timeoutUs)
+        {
+            *pu32EchoStartUs = micros();
+            u8EchoDetected = 1U;
+        }
+    }
+
+    return u8EchoDetected;
+}
+
+/**
+ * @brief Measure how long ECHO remains HIGH.
+ *
+ * @details
+ * This function measures the HIGH width of the ECHO pulse. The result is
+ * returned in microseconds.
+ *
+ * @param[in] sensor
+ * Pointer to ultrasonic sensor object.
+ *
+ * @param[in] u32EchoStartUs
+ * Timestamp in microseconds when ECHO became HIGH.
+ *
+ * @return uint32_t
+ * ECHO HIGH pulse width in microseconds.
+ *
+ * @retval 0U
+ * ECHO remained HIGH until timeout or sensor pointer is invalid.
+ */
+static uint32_t Ultrasonic_MeasureEchoHigh(Ultrasonic_t *sensor,
+                                           uint32_t u32EchoStartUs)
+{
+    uint32_t u32EchoEndUs = 0U;
+    uint32_t u32DurationUs = 0U;
+
+    if (1U == Ultrasonic_IsValidSensor(sensor))
+    {
+        while ((true == digitalRead(sensor->echoPin)) &&
+               ((micros() - u32EchoStartUs) < sensor->timeoutUs))
+        {
+            /* Busy wait for ECHO falling edge. */
+        }
+
+        u32EchoEndUs = micros();
+        u32DurationUs = u32EchoEndUs - u32EchoStartUs;
+
+        if (sensor->timeoutUs <= u32DurationUs)
+        {
+            u32DurationUs = 0U;
+        }
+    }
+
+    return u32DurationUs;
+}
+
+/**
+ * @brief Sort distance sample buffer in ascending order.
+ *
+ * @details
+ * A simple nested-loop sort is used because sample count is small and the
+ * implementation is easy for students to understand.
  *
  * @param[in,out] buffer
- * Sample buffer to sort.
+ * Sample buffer.
  *
  * @param[in] sampleCount
- * Number of samples inside the buffer.
+ * Number of samples in buffer.
  *
  * @return None.
  */
@@ -202,26 +343,22 @@ static void Ultrasonic_SortAscending(float *buffer,
  * @brief Average middle samples after sorting.
  *
  * @details
- * The filter removes noisy low-end and high-end samples after sorting.
+ * This function removes low-end and high-end samples after sorting, then
+ * averages the middle samples.
  *
- * With 20 samples:
- *
- * - Remove 5 smallest samples.
- * - Remove 5 largest samples.
- * - Average the 10 middle samples.
- *
- * For smaller sample counts, the remove count is sampleCount / 4.
- *
- * Invalid distance values are skipped during averaging.
+ * Invalid samples are skipped.
  *
  * @param[in] buffer
  * Sorted sample buffer.
  *
  * @param[in] sampleCount
- * Number of samples inside the buffer.
+ * Number of samples in buffer.
  *
  * @return float
- * Average middle distance in centimeters, or ULTRASONIC_INVALID_DISTANCE_CM.
+ * Filtered distance in centimeters.
+ *
+ * @retval ULTRASONIC_INVALID_DISTANCE_CM
+ * No valid sample is available.
  */
 static float Ultrasonic_AverageMiddleSamples(float *buffer,
                                              uint8_t sampleCount)
@@ -268,17 +405,6 @@ static float Ultrasonic_AverageMiddleSamples(float *buffer,
 /* Arduino-like Simple API                                                    */
 /* ========================================================================= */
 
-/**
- * @brief Initialize the default ultrasonic sensor.
- *
- * @param[in] trigPin
- * Logical pin connected to TRIG.
- *
- * @param[in] echoPin
- * Logical pin connected to ECHO.
- *
- * @return None.
- */
 void ultrasonicBegin(uint8_t trigPin,
                      uint8_t echoPin)
 {
@@ -287,89 +413,38 @@ void ultrasonicBegin(uint8_t trigPin,
                      echoPin);
 }
 
-/**
- * @brief Set timeout for the default ultrasonic sensor.
- *
- * @param[in] timeoutUs
- * Timeout value in microseconds.
- *
- * @return None.
- */
 void ultrasonicSetTimeout(uint32_t timeoutUs)
 {
     Ultrasonic_SetTimeout(&g_stDefaultUltrasonic,
                           timeoutUs);
 }
 
-/**
- * @brief Read echo duration from the default ultrasonic sensor.
- *
- * @return uint32_t
- * Echo duration in microseconds.
- */
 uint32_t ultrasonicReadDuration(void)
 {
     return Ultrasonic_ReadDurationUs(&g_stDefaultUltrasonic);
 }
 
-/**
- * @brief Read distance in centimeters from the default ultrasonic sensor.
- *
- * @return float
- * Distance in centimeters, or ULTRASONIC_INVALID_DISTANCE_CM.
- */
 float ultrasonicRead(void)
 {
     return Ultrasonic_ReadCm(&g_stDefaultUltrasonic);
 }
 
-/**
- * @brief Read distance in inches from the default ultrasonic sensor.
- *
- * @return float
- * Distance in inches, or ULTRASONIC_INVALID_DISTANCE_CM.
- */
 float ultrasonicReadInch(void)
 {
     return Ultrasonic_ReadInch(&g_stDefaultUltrasonic);
 }
 
-/**
- * @brief Read filtered distance from the default ultrasonic sensor.
- *
- * @return float
- * Filtered distance in centimeters, or ULTRASONIC_INVALID_DISTANCE_CM.
- */
 float ultrasonicReadFiltered(void)
 {
-    return Ultrasonic_ReadCmFiltered(
-        &g_stDefaultUltrasonic,
-        g_f32DefaultFilterBuffer,
-        ULTRASONIC_DEFAULT_FILTER_SAMPLES);
+    return Ultrasonic_ReadCmFiltered(&g_stDefaultUltrasonic,
+                                     g_f32DefaultFilterBuffer,
+                                     ULTRASONIC_DEFAULT_FILTER_SAMPLES);
 }
 
 /* ========================================================================= */
 /* Multi-instance API                                                         */
 /* ========================================================================= */
 
-/**
- * @brief Initialize an ultrasonic sensor instance.
- *
- * @details
- * This function stores logical pin information, configures the TRIG pin
- * as output, configures the ECHO pin as input, and drives TRIG LOW.
- *
- * @param[in,out] sensor
- * Pointer to ultrasonic sensor object.
- *
- * @param[in] trigPin
- * Logical pin connected to TRIG.
- *
- * @param[in] echoPin
- * Logical pin connected to ECHO.
- *
- * @return None.
- */
 void Ultrasonic_Begin(Ultrasonic_t *sensor,
                       uint8_t trigPin,
                       uint8_t echoPin)
@@ -387,17 +462,6 @@ void Ultrasonic_Begin(Ultrasonic_t *sensor,
     }
 }
 
-/**
- * @brief Set timeout for an ultrasonic sensor instance.
- *
- * @param[in,out] sensor
- * Pointer to ultrasonic sensor object.
- *
- * @param[in] timeoutUs
- * Timeout value in microseconds.
- *
- * @return None.
- */
 void Ultrasonic_SetTimeout(Ultrasonic_t *sensor,
                            uint32_t timeoutUs)
 {
@@ -408,93 +472,26 @@ void Ultrasonic_SetTimeout(Ultrasonic_t *sensor,
     }
 }
 
-/**
- * @brief Read echo pulse duration in microseconds.
- *
- * @details
- * This function sends a trigger pulse, waits for ECHO to become HIGH,
- * then measures the HIGH pulse width using micros().
- *
- * This version does not call delayMicroseconds(1U) inside the measurement
- * loops. Therefore it avoids repeatedly restarting LPIT channel 1 while
- * measuring the ECHO pulse.
- *
- * @param[in] sensor
- * Pointer to ultrasonic sensor object.
- *
- * @return uint32_t
- * Echo pulse duration in microseconds.
- *
- * @retval 0U
- * Timeout or invalid sensor.
- */
 uint32_t Ultrasonic_ReadDurationUs(Ultrasonic_t *sensor)
 {
-    uint32_t u32StartTimeUs = 0U;
     uint32_t u32EchoStartUs = 0U;
-    uint32_t u32EchoEndUs = 0U;
     uint32_t u32DurationUs = 0U;
-    uint8_t u8IsTimeout = 0U;
 
     if (1U == Ultrasonic_IsValidSensor(sensor))
     {
-        /*
-         * Send the HC-SR04 trigger pulse.
-         */
         Ultrasonic_SendTriggerPulse(sensor);
 
-        /*
-         * Wait for ECHO to become HIGH.
-         */
-        u32StartTimeUs = micros();
-
-        while ((false == digitalRead(sensor->echoPin)) &&
-               ((micros() - u32StartTimeUs) < sensor->timeoutUs))
+        if (1U == Ultrasonic_WaitEchoHigh(sensor,
+                                          &u32EchoStartUs))
         {
-            /* Busy wait for echo rising edge. */
-        }
-
-        if ((micros() - u32StartTimeUs) >= sensor->timeoutUs)
-        {
-            u8IsTimeout = 1U;
-        }
-
-        /*
-         * Measure how long ECHO stays HIGH.
-         */
-        if (0U == u8IsTimeout)
-        {
-            u32EchoStartUs = micros();
-
-            while ((true == digitalRead(sensor->echoPin)) &&
-                   ((micros() - u32EchoStartUs) < sensor->timeoutUs))
-            {
-                /* Busy wait for echo falling edge. */
-            }
-
-            u32EchoEndUs = micros();
-
-            u32DurationUs = u32EchoEndUs - u32EchoStartUs;
-
-            if (u32DurationUs >= sensor->timeoutUs)
-            {
-                u32DurationUs = 0U;
-            }
+            u32DurationUs = Ultrasonic_MeasureEchoHigh(sensor,
+                                                       u32EchoStartUs);
         }
     }
 
     return u32DurationUs;
 }
 
-/**
- * @brief Read distance in centimeters.
- *
- * @param[in] sensor
- * Pointer to ultrasonic sensor object.
- *
- * @return float
- * Distance in centimeters, or ULTRASONIC_INVALID_DISTANCE_CM.
- */
 float Ultrasonic_ReadCm(Ultrasonic_t *sensor)
 {
     uint32_t u32DurationUs = 0U;
@@ -510,15 +507,6 @@ float Ultrasonic_ReadCm(Ultrasonic_t *sensor)
     return f32DistanceCm;
 }
 
-/**
- * @brief Read distance in inches.
- *
- * @param[in] sensor
- * Pointer to ultrasonic sensor object.
- *
- * @return float
- * Distance in inches, or ULTRASONIC_INVALID_DISTANCE_CM.
- */
 float Ultrasonic_ReadInch(Ultrasonic_t *sensor)
 {
     float f32DistanceCm = ULTRASONIC_INVALID_DISTANCE_CM;
@@ -534,30 +522,6 @@ float Ultrasonic_ReadInch(Ultrasonic_t *sensor)
     return f32DistanceInch;
 }
 
-/**
- * @brief Read filtered distance in centimeters.
- *
- * @details
- * This function:
- *
- * 1. Takes sampleCount measurements.
- * 2. Stores all samples in the user-provided buffer.
- * 3. Sorts the buffer in ascending order.
- * 4. Removes noisy low-end and high-end samples.
- * 5. Returns the average of the middle samples.
- *
- * @param[in] sensor
- * Pointer to ultrasonic sensor object.
- *
- * @param[in,out] buffer
- * Buffer used to store distance samples.
- *
- * @param[in] sampleCount
- * Number of samples to collect.
- *
- * @return float
- * Filtered distance in centimeters, or ULTRASONIC_INVALID_DISTANCE_CM.
- */
 float Ultrasonic_ReadCmFiltered(Ultrasonic_t *sensor,
                                 float *buffer,
                                 uint8_t sampleCount)

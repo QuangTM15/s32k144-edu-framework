@@ -1,19 +1,19 @@
 /**
  * @file ultrasonic_uart.c
- * @brief HC-SR04 ultrasonic sensor example with UART output.
+ * @brief HC-SR04 ultrasonic sensor UART example.
  *
  * @details
- * This example demonstrates how to use the EduFramework ultrasonic device
- * library together with the Arduino-style Serial1 API.
+ * This example demonstrates the simplest way to use the EduFramework
+ * ultrasonic device library with Serial1.
  *
- * Hardware connection example:
+ * Hardware connection:
  *
- * - HC-SR04 TRIG -> GPIO0
- * - HC-SR04 ECHO -> GPIO1
  * - HC-SR04 VCC  -> 5V
  * - HC-SR04 GND  -> GND
+ * - HC-SR04 TRIG -> GPIO2
+ * - HC-SR04 ECHO -> GPIO1
  *
- * The example sends distance data to Serial1 every 500 ms.
+ * The measured distance is printed to Serial1 every 500 ms.
  */
 
 #include "Arduino.h"
@@ -23,28 +23,28 @@
 /**
  * @brief Logical pin connected to HC-SR04 TRIG.
  */
-#define ULTRASONIC_UART_TRIG_PIN        (GPIO0)
+#define ULTRASONIC_UART_TRIG_PIN (GPIO2)
 
 /**
  * @brief Logical pin connected to HC-SR04 ECHO.
  */
-#define ULTRASONIC_UART_ECHO_PIN        (GPIO1)
+#define ULTRASONIC_UART_ECHO_PIN (GPIO1)
 
 /**
  * @brief Serial baud rate used by this example.
  */
-#define ULTRASONIC_UART_BAUD_RATE       (9600U)
+#define ULTRASONIC_UART_BAUD_RATE (9600U)
 
 /**
  * @brief Delay between distance measurements in milliseconds.
  */
-#define ULTRASONIC_UART_PERIOD_MS       (500U)
+#define ULTRASONIC_UART_PERIOD_MS (500U)
 
 /**
  * @brief Run ultrasonic sensor UART example.
  *
  * @details
- * This function initializes the EduFramework Arduino-style layer, starts
+ * This function initializes the Arduino-style framework layer, starts
  * Serial1, initializes the default ultrasonic sensor, then continuously
  * reads distance and prints the result.
  *
@@ -52,7 +52,7 @@
  */
 void Example_UltrasonicUart(void)
 {
-    float f32DistanceCm = 0.0f;
+    float f32DistanceCm = ULTRASONIC_INVALID_DISTANCE_CM;
 
     setup();
 
@@ -62,23 +62,25 @@ void Example_UltrasonicUart(void)
                     ULTRASONIC_UART_ECHO_PIN);
 
     Serial1_println("--------------------------------");
-    Serial1_println("EduFramework Ultrasonic UART");
-    Serial1_println("TRIG = GPIO0, ECHO = GPIO1");
+    Serial1_println("EduFramework HC-SR04 Example");
+    Serial1_println("TRIG : GPIO2");
+    Serial1_println("ECHO : GPIO1");
+    Serial1_println("UART : Serial1 @ 9600");
     Serial1_println("--------------------------------");
 
     while (1)
     {
         f32DistanceCm = ultrasonicRead();
 
-        if (0.0f <= f32DistanceCm)
+        if (ULTRASONIC_INVALID_DISTANCE_CM != f32DistanceCm)
         {
-            Serial1_print("Distance: ");
+            Serial1_print("Distance = ");
             Serial1_printFloat(f32DistanceCm);
             Serial1_println(" cm");
         }
         else
         {
-            Serial1_println("Distance: Timeout");
+            Serial1_println("Distance = Timeout");
         }
 
         delay(ULTRASONIC_UART_PERIOD_MS);
