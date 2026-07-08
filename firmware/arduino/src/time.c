@@ -19,7 +19,7 @@
 /**
  * @brief LPIT channel used as the system time base.
  */
-#define TIME_LPIT_CHANNEL            (0U)
+#define TIME_LPIT_CHANNEL (0U)
 
 /**
  * @brief LPIT tick value for a 1 ms period.
@@ -30,7 +30,22 @@
  *
  * 40 MHz × 1 ms = 40000 ticks
  */
-#define TIME_1MS_TICK_VALUE          (40000U)
+#define TIME_1MS_TICK_VALUE (40000U)
+
+/**
+ * @brief LPIT channel used for short microsecond delays.
+ */
+#define TIME_LPIT_MICROS_CHANNEL (1U)
+
+/**
+ * @brief LPIT tick count for 1 microsecond.
+ *
+ * @details
+ * LPIT functional clock is 40 MHz.
+ *
+ * 40 MHz × 1 us = 40 ticks
+ */
+#define TIME_1US_TICK_VALUE (40U)
 
 /**
  * @brief Millisecond system counter.
@@ -156,4 +171,103 @@ void delay(uint32_t u32Ms)
 void Time_SetCallback(time_callback_t pfCallback)
 {
     g_pfTimeCallback = pfCallback;
+}
+
+/**
+ * @brief Blocking delay in microseconds.
+ *
+ * @details
+ * This function uses LPIT channel 1 as a one-shot polling timer.
+ *
+ * The system millisecond tick uses LPIT channel 0, so this function
+ * does not disturb millis() or delay().
+ *
+ * This implementation is intended for short delays. It performs a busy wait
+ * and should not be used inside interrupt service routines.
+ *
+ * @param[in] u32Us
+ * Delay duration in microseconds.
+ *
+ * @return None.
+ */
+void delayMicroseconds(uint32_t u32Us)
+{
+    uint32_t u32Ticks = 0U;
+
+    if (0U != u32Us)
+    {
+        u32Ticks = u32Us * TIME_1US_TICK_VALUE;
+
+        LPIT_StopTimer(TIME_LPIT_MICROS_CHANNEL);
+        LPIT_ClearFlag(TIME_LPIT_MICROS_CHANNEL);
+        LPIT_SetTimerPeriod(TIME_LPIT_MICROS_CHANNEL, u32Ticks);
+        LPIT_StartTimer(TIME_LPIT_MICROS_CHANNEL);
+
+        while (0U == LPIT_GetFlag(TIME_LPIT_MICROS_CHANNEL))
+        {
+            /* Busy wait */
+        }
+
+        LPIT_StopTimer(TIME_LPIT_MICROS_CHANNEL);
+        LPIT_ClearFlag(TIME_LPIT_MICROS_CHANNEL);
+    }
+}
+
+/**
+ * @brief Get elapsed time in microseconds.
+ *
+ * @details
+ * This function combines:
+ *
+ * - The millisecond counter updated by LPIT channel 0 interrupt.
+ * - The current LPIT channel 0 down-counter value.
+ *
+ * LPIT channel 0 is configured for 1 ms:
+ *
+ * 40 MHz � 1 ms = 40000 ticks
+ *
+ * Because LPIT is a down-counter:
+ *
+ * elapsedTicks = TIME_1MS_TICK_VALUE - currentCounter
+ *
+ * elapsedUs = elapsedTicks / 40
+ *
+ * @return uint32_t
+ * Elapsed time in microseconds.
+ */
+uint32_t micros(void)
+{
+    uint32_t u32MillisBefore = 0U;
+    uint32_t u32MillisAfter = 0U;
+    uint32_t u32CurrentTicks = 0U;
+    uint32_t u32ElapsedTicks = 0U;
+    uint32_t u32ElapsedUs = 0U;
+    uint32_t u32TimeUs = 0U;
+
+    /*
+     * Read millis before and after reading LPIT counter.
+     * If an interrupt occurs during the read sequence, repeat the read
+     * to avoid mixing an old millisecond value with a new counter value.
+     */
+    do
+    {
+        u32MillisBefore = g_u32Millis;
+        u32CurrentTicks = LPIT_GetCurrentValue(TIME_LPIT_CHANNEL);
+        u32MillisAfter = g_u32Millis;
+    }
+    while (u32MillisBefore != u32MillisAfter);
+
+    if (TIME_1MS_TICK_VALUE >= u32CurrentTicks)
+    {
+        u32ElapsedTicks = TIME_1MS_TICK_VALUE - u32CurrentTicks;
+        u32ElapsedUs = u32ElapsedTicks / TIME_1US_TICK_VALUE;
+    }
+    else
+    {
+        u32ElapsedUs = 0U;
+    }
+
+    u32TimeUs = (u32MillisAfter * 1000U) + u32ElapsedUs;
+
+    return u32TimeUs;
 }

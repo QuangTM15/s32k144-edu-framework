@@ -297,3 +297,31 @@ void LPIT_DisableInterrupt(uint8_t u8Channel)
         IP_LPIT0->MIER &= ~LPIT_CHANNEL_MASK(u8Channel);
     }
 }
+
+/**
+ * @brief Get current counter value of an LPIT timer channel.
+ *
+ * @details
+ * This function reads the current value register of the selected LPIT
+ * channel. LPIT is a down-counter, so this value decreases from TVAL
+ * toward zero.
+ *
+ * Invalid channels return 0U.
+ *
+ * @param[in] u8Channel
+ * LPIT channel index.
+ *
+ * @return uint32_t
+ * Current timer counter value.
+ */
+uint32_t LPIT_GetCurrentValue(uint8_t u8Channel)
+{
+    uint32_t u32CurrentValue = 0U;
+
+    if (1U == LPIT_IsValidChannel(u8Channel))
+    {
+        u32CurrentValue = IP_LPIT0->TMR[u8Channel].CVAL;
+    }
+
+    return u32CurrentValue;
+}
