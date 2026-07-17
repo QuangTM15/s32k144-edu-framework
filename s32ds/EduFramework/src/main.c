@@ -1,4 +1,3 @@
-
 #include "Arduino.h"
 #include "ntc_uart.h"
 
