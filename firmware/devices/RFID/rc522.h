@@ -52,17 +52,17 @@
 /**
  * @brief Maximum UID storage reserved by the public UID structure.
  */
-#define RC522_UID_MAX_SIZE               (10U)
+#define RC522_UID_MAX_SIZE (10U)
 
 /**
  * @brief UID size supported by the current implementation.
  */
-#define RC522_UID_SINGLE_SIZE            (4U)
+#define RC522_UID_SINGLE_SIZE (4U)
 
 /**
  * @brief Invalid or unavailable VersionReg value.
  */
-#define RC522_VERSION_INVALID            (0x00U)
+#define RC522_VERSION_INVALID (0x00U)
 
 /**
  * @brief Version value returned by the tested compatible module.
@@ -71,22 +71,22 @@
  * The tested module returned 0x82 on both ESP32 and S32K144 and
  * successfully detected and selected MIFARE Classic cards.
  */
-#define RC522_VERSION_COMPATIBLE_82      (0x82U)
+#define RC522_VERSION_COMPATIBLE_82 (0x82U)
 
 /**
  * @brief Common compatible-clone VersionReg value.
  */
-#define RC522_VERSION_CLONE_88           (0x88U)
+#define RC522_VERSION_CLONE_88 (0x88U)
 
 /**
  * @brief MFRC522 silicon version 1.0.
  */
-#define RC522_VERSION_1_0                (0x91U)
+#define RC522_VERSION_1_0 (0x91U)
 
 /**
  * @brief MFRC522 silicon version 2.0.
  */
-#define RC522_VERSION_2_0                (0x92U)
+#define RC522_VERSION_2_0 (0x92U)
 
 /* ========================================================================= */
 /* Public Types                                                              */

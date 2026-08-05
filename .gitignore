@@ -31,3 +31,5 @@ Codex/
 *.out
 
 package_release.ps1
+
+s32ds/

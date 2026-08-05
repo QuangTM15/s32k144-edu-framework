@@ -34,42 +34,42 @@ typedef uint8_t rc522_status_t;
 /**
  * @brief Operation completed successfully.
  */
-#define RC522_STATUS_OK                  ((rc522_status_t)0U)
+#define RC522_STATUS_OK ((rc522_status_t)0U)
 
 /**
  * @brief General communication or protocol error.
  */
-#define RC522_STATUS_ERROR               ((rc522_status_t)1U)
+#define RC522_STATUS_ERROR ((rc522_status_t)1U)
 
 /**
  * @brief Operation timed out.
  */
-#define RC522_STATUS_TIMEOUT             ((rc522_status_t)2U)
+#define RC522_STATUS_TIMEOUT ((rc522_status_t)2U)
 
 /**
  * @brief A card collision was reported.
  */
-#define RC522_STATUS_COLLISION           ((rc522_status_t)3U)
+#define RC522_STATUS_COLLISION ((rc522_status_t)3U)
 
 /**
  * @brief CRC or UID BCC validation failed.
  */
-#define RC522_STATUS_CRC_ERROR           ((rc522_status_t)4U)
+#define RC522_STATUS_CRC_ERROR ((rc522_status_t)4U)
 
 /**
  * @brief An invalid argument was supplied.
  */
-#define RC522_STATUS_INVALID_ARG         ((rc522_status_t)5U)
+#define RC522_STATUS_INVALID_ARG ((rc522_status_t)5U)
 
 /**
  * @brief The receive buffer is too small.
  */
-#define RC522_STATUS_NO_ROOM             ((rc522_status_t)6U)
+#define RC522_STATUS_NO_ROOM ((rc522_status_t)6U)
 
 /**
  * @brief The MFRC522 library is not initialized.
  */
-#define RC522_STATUS_NOT_INITIALIZED     ((rc522_status_t)7U)
+#define RC522_STATUS_NOT_INITIALIZED ((rc522_status_t)7U)
 
 /* ========================================================================= */
 /* Private Constants                                                         */
@@ -79,138 +79,138 @@ typedef uint8_t rc522_status_t;
 /* SPI configuration                                                         */
 /* ------------------------------------------------------------------------- */
 
-#define RC522_SPI_FREQUENCY_HZ           (1000000UL)
-#define RC522_SPI_READ_MASK              (0x80U)
-#define RC522_SPI_ADDRESS_MASK           (0x7EU)
-#define RC522_SPI_DUMMY_BYTE             (0x00U)
+#define RC522_SPI_FREQUENCY_HZ (1000000UL)
+#define RC522_SPI_READ_MASK (0x80U)
+#define RC522_SPI_ADDRESS_MASK (0x7EU)
+#define RC522_SPI_DUMMY_BYTE (0x00U)
 
 /* ------------------------------------------------------------------------- */
 /* MFRC522 PCD commands                                                      */
 /* ------------------------------------------------------------------------- */
 
-#define RC522_COMMAND_IDLE               (0x00U)
-#define RC522_COMMAND_CALC_CRC           (0x03U)
-#define RC522_COMMAND_TRANSCEIVE         (0x0CU)
-#define RC522_COMMAND_SOFT_RESET         (0x0FU)
+#define RC522_COMMAND_IDLE (0x00U)
+#define RC522_COMMAND_CALC_CRC (0x03U)
+#define RC522_COMMAND_TRANSCEIVE (0x0CU)
+#define RC522_COMMAND_SOFT_RESET (0x0FU)
 
 /* ------------------------------------------------------------------------- */
 /* ISO/IEC 14443A PICC commands                                              */
 /* ------------------------------------------------------------------------- */
 
-#define RC522_PICC_COMMAND_REQA          (0x26U)
-#define RC522_PICC_COMMAND_HLTA          (0x50U)
-#define RC522_PICC_COMMAND_SEL_CL1       (0x93U)
-#define RC522_PICC_NVB_ANTICOLLISION     (0x20U)
-#define RC522_PICC_NVB_SELECT            (0x70U)
+#define RC522_PICC_COMMAND_REQA (0x26U)
+#define RC522_PICC_COMMAND_HLTA (0x50U)
+#define RC522_PICC_COMMAND_SEL_CL1 (0x93U)
+#define RC522_PICC_NVB_ANTICOLLISION (0x20U)
+#define RC522_PICC_NVB_SELECT (0x70U)
 
 /* ------------------------------------------------------------------------- */
 /* MFRC522 registers                                                         */
 /* ------------------------------------------------------------------------- */
 
-#define RC522_REG_COMMAND                (0x01U)
-#define RC522_REG_COM_IRQ                (0x04U)
-#define RC522_REG_DIV_IRQ                (0x05U)
-#define RC522_REG_ERROR                  (0x06U)
-#define RC522_REG_FIFO_DATA              (0x09U)
-#define RC522_REG_FIFO_LEVEL             (0x0AU)
-#define RC522_REG_CONTROL                (0x0CU)
-#define RC522_REG_BIT_FRAMING            (0x0DU)
-#define RC522_REG_COLL                   (0x0EU)
+#define RC522_REG_COMMAND (0x01U)
+#define RC522_REG_COM_IRQ (0x04U)
+#define RC522_REG_DIV_IRQ (0x05U)
+#define RC522_REG_ERROR (0x06U)
+#define RC522_REG_FIFO_DATA (0x09U)
+#define RC522_REG_FIFO_LEVEL (0x0AU)
+#define RC522_REG_CONTROL (0x0CU)
+#define RC522_REG_BIT_FRAMING (0x0DU)
+#define RC522_REG_COLL (0x0EU)
 
-#define RC522_REG_MODE                   (0x11U)
-#define RC522_REG_TX_MODE                (0x12U)
-#define RC522_REG_RX_MODE                (0x13U)
-#define RC522_REG_TX_CONTROL             (0x14U)
-#define RC522_REG_TX_ASK                 (0x15U)
+#define RC522_REG_MODE (0x11U)
+#define RC522_REG_TX_MODE (0x12U)
+#define RC522_REG_RX_MODE (0x13U)
+#define RC522_REG_TX_CONTROL (0x14U)
+#define RC522_REG_TX_ASK (0x15U)
 
-#define RC522_REG_CRC_RESULT_H           (0x21U)
-#define RC522_REG_CRC_RESULT_L           (0x22U)
+#define RC522_REG_CRC_RESULT_H (0x21U)
+#define RC522_REG_CRC_RESULT_L (0x22U)
 
-#define RC522_REG_T_MODE                 (0x2AU)
-#define RC522_REG_T_PRESCALER            (0x2BU)
-#define RC522_REG_T_RELOAD_H             (0x2CU)
-#define RC522_REG_T_RELOAD_L             (0x2DU)
+#define RC522_REG_T_MODE (0x2AU)
+#define RC522_REG_T_PRESCALER (0x2BU)
+#define RC522_REG_T_RELOAD_H (0x2CU)
+#define RC522_REG_T_RELOAD_L (0x2DU)
 
-#define RC522_REG_VERSION                (0x37U)
+#define RC522_REG_VERSION (0x37U)
 
 /* ------------------------------------------------------------------------- */
 /* Register masks                                                            */
 /* ------------------------------------------------------------------------- */
 
-#define RC522_COMMAND_POWER_DOWN_MASK    (0x10U)
+#define RC522_COMMAND_POWER_DOWN_MASK (0x10U)
 
-#define RC522_COM_IRQ_RX_MASK            (0x20U)
-#define RC522_COM_IRQ_IDLE_MASK          (0x10U)
-#define RC522_COM_IRQ_TIMER_MASK         (0x01U)
+#define RC522_COM_IRQ_RX_MASK (0x20U)
+#define RC522_COM_IRQ_IDLE_MASK (0x10U)
+#define RC522_COM_IRQ_TIMER_MASK (0x01U)
 
-#define RC522_COM_IRQ_WAIT_MASK          \
-    (RC522_COM_IRQ_RX_MASK |             \
-     RC522_COM_IRQ_IDLE_MASK |           \
+#define RC522_COM_IRQ_WAIT_MASK \
+    (RC522_COM_IRQ_RX_MASK |    \
+     RC522_COM_IRQ_IDLE_MASK |  \
      RC522_COM_IRQ_TIMER_MASK)
 
-#define RC522_DIV_IRQ_CRC_MASK           (0x04U)
+#define RC522_DIV_IRQ_CRC_MASK (0x04U)
 
 #define RC522_ERROR_BUFFER_OVERFLOW_MASK (0x10U)
-#define RC522_ERROR_COLLISION_MASK       (0x08U)
-#define RC522_ERROR_CRC_MASK             (0x04U)
-#define RC522_ERROR_PROTOCOL_MASK        (0x01U)
+#define RC522_ERROR_COLLISION_MASK (0x08U)
+#define RC522_ERROR_CRC_MASK (0x04U)
+#define RC522_ERROR_PROTOCOL_MASK (0x01U)
 
-#define RC522_ERROR_FATAL_MASK           \
-    (RC522_ERROR_BUFFER_OVERFLOW_MASK |  \
+#define RC522_ERROR_FATAL_MASK          \
+    (RC522_ERROR_BUFFER_OVERFLOW_MASK | \
      RC522_ERROR_PROTOCOL_MASK)
 
-#define RC522_FIFO_FLUSH_MASK            (0x80U)
+#define RC522_FIFO_FLUSH_MASK (0x80U)
 
-#define RC522_BIT_FRAMING_START_SEND_MASK   (0x80U)
+#define RC522_BIT_FRAMING_START_SEND_MASK (0x80U)
 #define RC522_BIT_FRAMING_TX_LAST_BITS_MASK (0x07U)
 
-#define RC522_CONTROL_RX_LAST_BITS_MASK  (0x07U)
-#define RC522_COLL_VALUES_AFTER_MASK     (0x80U)
-#define RC522_TX_CONTROL_ANTENNA_MASK    (0x03U)
+#define RC522_CONTROL_RX_LAST_BITS_MASK (0x07U)
+#define RC522_COLL_VALUES_AFTER_MASK (0x80U)
+#define RC522_TX_CONTROL_ANTENNA_MASK (0x03U)
 
 /* ------------------------------------------------------------------------- */
 /* Default configuration                                                     */
 /* ------------------------------------------------------------------------- */
 
-#define RC522_TX_MODE_DEFAULT            (0x00U)
-#define RC522_RX_MODE_DEFAULT            (0x00U)
-#define RC522_T_MODE_DEFAULT             (0x80U)
-#define RC522_T_PRESCALER_DEFAULT        (0xA9U)
-#define RC522_T_RELOAD_H_DEFAULT         (0x03U)
-#define RC522_T_RELOAD_L_DEFAULT         (0xE8U)
-#define RC522_TX_ASK_DEFAULT             (0x40U)
-#define RC522_MODE_DEFAULT               (0x3DU)
+#define RC522_TX_MODE_DEFAULT (0x00U)
+#define RC522_RX_MODE_DEFAULT (0x00U)
+#define RC522_T_MODE_DEFAULT (0x80U)
+#define RC522_T_PRESCALER_DEFAULT (0xA9U)
+#define RC522_T_RELOAD_H_DEFAULT (0x03U)
+#define RC522_T_RELOAD_L_DEFAULT (0xE8U)
+#define RC522_TX_ASK_DEFAULT (0x40U)
+#define RC522_MODE_DEFAULT (0x3DU)
 
 /* ------------------------------------------------------------------------- */
 /* Protocol constants                                                        */
 /* ------------------------------------------------------------------------- */
 
-#define RC522_ATQA_SIZE                  (2U)
-#define RC522_ANTICOLLISION_SIZE         (5U)
-#define RC522_SELECT_FRAME_SIZE          (9U)
-#define RC522_SELECT_RESPONSE_SIZE       (3U)
-#define RC522_HALT_FRAME_SIZE            (4U)
+#define RC522_ATQA_SIZE (2U)
+#define RC522_ANTICOLLISION_SIZE (5U)
+#define RC522_SELECT_FRAME_SIZE (9U)
+#define RC522_SELECT_RESPONSE_SIZE (3U)
+#define RC522_HALT_FRAME_SIZE (4U)
 
-#define RC522_CRC_SIZE                   (2U)
+#define RC522_CRC_SIZE (2U)
 
-#define RC522_REQA_VALID_BITS            (7U)
-#define RC522_FULL_BYTE_VALID_BITS       (0U)
+#define RC522_REQA_VALID_BITS (7U)
+#define RC522_FULL_BYTE_VALID_BITS (0U)
 
-#define RC522_UID_BCC_INDEX              (4U)
-#define RC522_SAK_INDEX                  (0U)
-#define RC522_SAK_CASCADE_BIT_MASK       (0x04U)
+#define RC522_UID_BCC_INDEX (4U)
+#define RC522_SAK_INDEX (0U)
+#define RC522_SAK_CASCADE_BIT_MASK (0x04U)
 
 /* ------------------------------------------------------------------------- */
 /* Timing and timeout constants                                              */
 /* ------------------------------------------------------------------------- */
 
-#define RC522_HARD_RESET_LOW_DELAY_MS     (2UL)
+#define RC522_HARD_RESET_LOW_DELAY_MS (2UL)
 #define RC522_HARD_RESET_STARTUP_DELAY_MS (50UL)
-#define RC522_SOFT_RESET_DELAY_MS         (1UL)
+#define RC522_SOFT_RESET_DELAY_MS (1UL)
 
-#define RC522_RESET_TIMEOUT_COUNT        (1000UL)
-#define RC522_CRC_TIMEOUT_COUNT          (5000UL)
-#define RC522_TRANSCEIVE_TIMEOUT_COUNT   (10000UL)
+#define RC522_RESET_TIMEOUT_COUNT (1000UL)
+#define RC522_CRC_TIMEOUT_COUNT (5000UL)
+#define RC522_TRANSCEIVE_TIMEOUT_COUNT (10000UL)
 
 /* ========================================================================= */
 /* Private State                                                             */
@@ -617,11 +617,10 @@ static rc522_status_t RC522_CalculateCRC(
                     RC522_REG_DIV_IRQ);
 
             u32Timeout--;
-        }
-        while ((0U ==
-                (u8Irq &
-                 RC522_DIV_IRQ_CRC_MASK)) &&
-               (0UL != u32Timeout));
+        } while ((0U ==
+                  (u8Irq &
+                   RC522_DIV_IRQ_CRC_MASK)) &&
+                 (0UL != u32Timeout));
 
         RC522_WriteRegister(
             RC522_REG_COMMAND,
@@ -723,11 +722,10 @@ static rc522_status_t RC522_Transceive(
                     RC522_REG_COM_IRQ);
 
             u32Timeout--;
-        }
-        while ((0U ==
-                (u8Irq &
-                 RC522_COM_IRQ_WAIT_MASK)) &&
-               (0UL != u32Timeout));
+        } while ((0U ==
+                  (u8Irq &
+                   RC522_COM_IRQ_WAIT_MASK)) &&
+                 (0UL != u32Timeout));
 
         RC522_ClearRegisterBitMask(
             RC522_REG_BIT_FRAMING,
@@ -789,10 +787,9 @@ static rc522_status_t RC522_Transceive(
                     *pRxLength = u8FifoLevel;
 
                     u8ValidBits =
-                        (uint8_t)(
-                            RC522_ReadRegister(
-                                RC522_REG_CONTROL) &
-                            RC522_CONTROL_RX_LAST_BITS_MASK);
+                        (uint8_t)(RC522_ReadRegister(
+                                      RC522_REG_CONTROL) &
+                                  RC522_CONTROL_RX_LAST_BITS_MASK);
 
                     if ((uint8_t *)0 !=
                         pRxValidBits)
@@ -831,9 +828,8 @@ static rc522_status_t RC522_RequestA(uint8_t *pAtqa)
         RC522_STATUS_OK;
 
     uint8_t au8Command[1U] =
-    {
-        RC522_PICC_COMMAND_REQA
-    };
+        {
+            RC522_PICC_COMMAND_REQA};
 
     uint8_t u8ResponseLength =
         RC522_ATQA_SIZE;
@@ -885,10 +881,9 @@ static rc522_status_t RC522_AntiCollisionCL1(
         RC522_STATUS_OK;
 
     uint8_t au8Frame[2U] =
-    {
-        RC522_PICC_COMMAND_SEL_CL1,
-        RC522_PICC_NVB_ANTICOLLISION
-    };
+        {
+            RC522_PICC_COMMAND_SEL_CL1,
+            RC522_PICC_NVB_ANTICOLLISION};
 
     uint8_t u8ResponseLength =
         RC522_ANTICOLLISION_SIZE;
@@ -927,15 +922,13 @@ static rc522_status_t RC522_AntiCollisionCL1(
             else
             {
                 u8Bcc =
-                    (uint8_t)(
-                        pUidAndBcc[0U] ^
-                        pUidAndBcc[1U] ^
-                        pUidAndBcc[2U] ^
-                        pUidAndBcc[3U]);
+                    (uint8_t)(pUidAndBcc[0U] ^
+                              pUidAndBcc[1U] ^
+                              pUidAndBcc[2U] ^
+                              pUidAndBcc[3U]);
 
                 if (u8Bcc !=
-                    pUidAndBcc[
-                        RC522_UID_BCC_INDEX])
+                    pUidAndBcc[RC522_UID_BCC_INDEX])
                 {
                     Status =
                         RC522_STATUS_CRC_ERROR;
@@ -958,14 +951,11 @@ static rc522_status_t RC522_SelectCL1(
     rc522_status_t Status =
         RC522_STATUS_OK;
 
-    uint8_t au8Frame[
-        RC522_SELECT_FRAME_SIZE] = {0U};
+    uint8_t au8Frame[RC522_SELECT_FRAME_SIZE] = {0U};
 
-    uint8_t au8Response[
-        RC522_SELECT_RESPONSE_SIZE] = {0U};
+    uint8_t au8Response[RC522_SELECT_RESPONSE_SIZE] = {0U};
 
-    uint8_t au8CalculatedCrc[
-        RC522_CRC_SIZE] = {0U};
+    uint8_t au8CalculatedCrc[RC522_CRC_SIZE] = {0U};
 
     uint8_t u8ResponseLength =
         RC522_SELECT_RESPONSE_SIZE;
@@ -1192,11 +1182,10 @@ bool RC522_PCD_Reset(void)
                     RC522_REG_COMMAND);
 
             u32Timeout--;
-        }
-        while ((0U !=
-                (u8Command &
-                 RC522_COMMAND_POWER_DOWN_MASK)) &&
-               (0UL != u32Timeout));
+        } while ((0U !=
+                  (u8Command &
+                   RC522_COMMAND_POWER_DOWN_MASK)) &&
+                 (0UL != u32Timeout));
 
         if (0UL != u32Timeout)
         {
@@ -1299,8 +1288,7 @@ bool RC522_PICC_IsNewCardPresent(void)
 {
     bool bCardPresent = false;
 
-    uint8_t au8Atqa[
-        RC522_ATQA_SIZE] = {0U};
+    uint8_t au8Atqa[RC522_ATQA_SIZE] = {0U};
 
     if (true == s_bRc522Initialized)
     {
@@ -1330,11 +1318,9 @@ bool RC522_PICC_ReadCardSerial(
     rc522_status_t Status =
         RC522_STATUS_OK;
 
-    uint8_t au8UidAndBcc[
-        RC522_ANTICOLLISION_SIZE] =
-    {
-        0U
-    };
+    uint8_t au8UidAndBcc[RC522_ANTICOLLISION_SIZE] =
+        {
+            0U};
 
     uint8_t u8Sak = 0U;
     uint8_t u8Index = 0U;
@@ -1407,14 +1393,12 @@ void RC522_PICC_HaltA(void)
     rc522_status_t Status =
         RC522_STATUS_OK;
 
-    uint8_t au8Frame[
-        RC522_HALT_FRAME_SIZE] =
-    {
-        RC522_PICC_COMMAND_HLTA,
-        0x00U,
-        0x00U,
-        0x00U
-    };
+    uint8_t au8Frame[RC522_HALT_FRAME_SIZE] =
+        {
+            RC522_PICC_COMMAND_HLTA,
+            0x00U,
+            0x00U,
+            0x00U};
 
     if (true == s_bRc522Initialized)
     {
