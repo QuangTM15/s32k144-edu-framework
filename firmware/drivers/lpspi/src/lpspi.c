@@ -27,17 +27,17 @@
 /**
  * @brief Local alias for the configured LPSPI hardware base.
  */
-#define LPSPI_HW_BASE                         (LPSPI_INSTANCE)
+#define LPSPI_HW_BASE (LPSPI_INSTANCE)
 
 /**
  * @brief Boolean-like false value used inside this module.
  */
-#define LPSPI_FALSE                           (0U)
+#define LPSPI_FALSE (0U)
 
 /**
  * @brief Boolean-like true value used inside this module.
  */
-#define LPSPI_TRUE                            (1U)
+#define LPSPI_TRUE (1U)
 
 /**
  * @brief LPSPI0 PCC clock source selection.
@@ -46,7 +46,7 @@
  * The current framework clock setup uses SPLL_DIV2 as the LPSPI0
  * functional clock. This preserves the previous implementation intent.
  */
-#define LPSPI_PCC_CLOCK_SOURCE_SPLL_DIV2      (6U)
+#define LPSPI_PCC_CLOCK_SOURCE_SPLL_DIV2 (6U)
 
 /**
  * @brief LPSPI functional clock frequency in Hz.
@@ -55,22 +55,22 @@
  * This value must match the PCC clock source selected for LPSPI0.
  * The previous implementation documented SPLL_DIV2_CLK as 40 MHz.
  */
-#define LPSPI_SOURCE_CLOCK_HZ                 (40000000UL)
+#define LPSPI_SOURCE_CLOCK_HZ (40000000UL)
 
 /**
  * @brief Timeout count used for blocking polling loops.
  */
-#define LPSPI_TIMEOUT_COUNT                   (100000UL)
+#define LPSPI_TIMEOUT_COUNT (100000UL)
 
 /**
  * @brief All status flags clear mask.
  */
-#define LPSPI_CLEAR_ALL_STATUS_FLAGS          (0xFFFFFFFFUL)
+#define LPSPI_CLEAR_ALL_STATUS_FLAGS (0xFFFFFFFFUL)
 
 /**
  * @brief Default PCS line used by the current SPI stack.
  */
-#define LPSPI_DEFAULT_PCS                     (0U)
+#define LPSPI_DEFAULT_PCS (0U)
 
 /**
  * @brief Normal single-bit SPI pin configuration.
@@ -78,92 +78,92 @@
  * @details
  * PINCFG = 0 means SIN is input and SOUT is output.
  */
-#define LPSPI_PINCFG_NORMAL_SPI               (0U)
+#define LPSPI_PINCFG_NORMAL_SPI (0U)
 
 /**
  * @brief Active-low PCS polarity.
  */
-#define LPSPI_PCS_ACTIVE_LOW                  (0U)
+#define LPSPI_PCS_ACTIVE_LOW (0U)
 
 /**
  * @brief PCS-to-SCK delay setting.
  */
-#define LPSPI_DELAY_PCS_TO_SCK                (0U)
+#define LPSPI_DELAY_PCS_TO_SCK (0U)
 
 /**
  * @brief SCK-to-PCS delay setting.
  */
-#define LPSPI_DELAY_SCK_TO_PCS                (0U)
+#define LPSPI_DELAY_SCK_TO_PCS (0U)
 
 /**
  * @brief Delay between transfers.
  */
-#define LPSPI_DELAY_BETWEEN_TRANSFER          (0U)
+#define LPSPI_DELAY_BETWEEN_TRANSFER (0U)
 
 /**
  * @brief FIFO watermark used by the blocking driver.
  */
-#define LPSPI_FIFO_WATERMARK_ZERO             (0U)
+#define LPSPI_FIFO_WATERMARK_ZERO (0U)
 
 /**
  * @brief CPOL value for inactive-low SPI clock.
  */
-#define LPSPI_CPOL_LOW                        (0U)
+#define LPSPI_CPOL_LOW (0U)
 
 /**
  * @brief CPOL value for inactive-high SPI clock.
  */
-#define LPSPI_CPOL_HIGH                       (1U)
+#define LPSPI_CPOL_HIGH (1U)
 
 /**
  * @brief CPHA value for sampling on the first clock edge.
  */
-#define LPSPI_CPHA_FIRST_EDGE                 (0U)
+#define LPSPI_CPHA_FIRST_EDGE (0U)
 
 /**
  * @brief CPHA value for sampling on the second clock edge.
  */
-#define LPSPI_CPHA_SECOND_EDGE                (1U)
+#define LPSPI_CPHA_SECOND_EDGE (1U)
 
 /**
  * @brief LSBF field value for MSB-first transfer.
  */
-#define LPSPI_TCR_MSB_FIRST_VALUE             (0U)
+#define LPSPI_TCR_MSB_FIRST_VALUE (0U)
 
 /**
  * @brief LSBF field value for LSB-first transfer.
  */
-#define LPSPI_TCR_LSB_FIRST_VALUE             (1U)
+#define LPSPI_TCR_LSB_FIRST_VALUE (1U)
 
 /**
  * @brief Minimum frame size supported by this driver.
  */
-#define LPSPI_MIN_FRAME_SIZE_BITS             (8U)
+#define LPSPI_MIN_FRAME_SIZE_BITS (8U)
 
 /**
  * @brief Maximum frame size supported by this driver.
  */
-#define LPSPI_MAX_FRAME_SIZE_BITS             (16U)
+#define LPSPI_MAX_FRAME_SIZE_BITS (16U)
 
 /**
  * @brief LPSPI FRAMESZ register value for 8-bit frame.
  */
-#define LPSPI_FRAMESZ_8BIT_FIELD              (7U)
+#define LPSPI_FRAMESZ_8BIT_FIELD (7U)
 
 /**
  * @brief LPSPI FRAMESZ register value for 16-bit frame.
  */
-#define LPSPI_FRAMESZ_16BIT_FIELD             (15U)
+#define LPSPI_FRAMESZ_16BIT_FIELD (15U)
 
 /**
  * @brief Maximum LPSPI PRESCALE field value.
  */
-#define LPSPI_PRESCALE_FIELD_MAX              (7U)
+#define LPSPI_PRESCALE_FIELD_MAX (7U)
 
 /**
  * @brief Maximum LPSPI SCKDIV field value.
  */
-#define LPSPI_SCKDIV_FIELD_MAX                (255U)
+#define LPSPI_SCKDIV_FIELD_MAX (255U)
 
 /**
  * @brief Minimum divisor represented by SCKDIV field.
@@ -171,27 +171,27 @@
  * @details
  * LPSPI SCK divider is encoded as SCKDIV + 2.
  */
-#define LPSPI_SCKDIV_BASE                     (2UL)
+#define LPSPI_SCKDIV_BASE (2UL)
 
 /**
  * @brief Dummy byte used to generate SPI clock during read operation.
  */
-#define LPSPI_DUMMY_BYTE                      (0xFFU)
+#define LPSPI_DUMMY_BYTE (0xFFU)
 
 /**
  * @brief Dummy halfword used to generate SPI clock during 16-bit read.
  */
-#define LPSPI_DUMMY_HALFWORD                  (0xFFFFU)
+#define LPSPI_DUMMY_HALFWORD (0xFFFFU)
 
 /**
  * @brief 8-bit receive data mask.
  */
-#define LPSPI_RX_DATA_8BIT_MASK               (0xFFU)
+#define LPSPI_RX_DATA_8BIT_MASK (0xFFU)
 
 /**
  * @brief 16-bit receive data mask.
  */
-#define LPSPI_RX_DATA_16BIT_MASK              (0xFFFFU)
+#define LPSPI_RX_DATA_16BIT_MASK (0xFFFFU)
 
 /* ============================================================
  * Internal state
