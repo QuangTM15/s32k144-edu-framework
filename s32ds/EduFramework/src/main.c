@@ -1,13 +1,8 @@
 #include "Arduino.h"
-#include "ntc_uart.h"
+#include "lcd_tft_display.h"
+
 
 int main(void)
 {
-    setup();
-
-    NTC_UART_Example();
-
-    while (1)
-    {
-    }
+	Example_TFT_HelloWorld();
 }
