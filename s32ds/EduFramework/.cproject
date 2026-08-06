@@ -173,9 +173,37 @@
 							<tool id="com.freescale.s32ds.cross.gnu.disassembler.1135692474" name="Standard S32DS Disassembler" superClass="com.freescale.s32ds.cross.gnu.disassembler.177278825"/>
 						</toolChain>
 					</folderInfo>
+					<fileInfo id="com.nxp.s32ds.cle.arm.mbs.arm32.bare.gnu.10.2.exe.debug.260837327.1608482899" name="rfid_example.c" rcbsApplicability="disable" resourcePath="tests/example/src/rfid_example.c" toolsToInvoke="com.nxp.s32ds.cle.arm.mbs.arm32.bare.gnu.9.2.tool.c.compiler.2127702581.152271020">
+						<tool id="com.nxp.s32ds.cle.arm.mbs.arm32.bare.gnu.9.2.tool.c.compiler.2127702581.152271020" name="Standard S32DS C Compiler" superClass="com.nxp.s32ds.cle.arm.mbs.arm32.bare.gnu.9.2.tool.c.compiler.2127702581">
+							<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="gnu.c.compiler.option.include.paths.2053527502" name="Include paths (-I)" superClass="gnu.c.compiler.option.include.paths" useByScannerDiscovery="false" valueType="includePath">
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/lpspi/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/RFID&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/LCD_TFT&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/LCD&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/ultrasonic&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/NTC&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/lpi2c/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/lpuart/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/ftm/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/adc/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/port/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/irq/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/lpit/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/clock/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../tests/demo/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../tests/example/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/gpio/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/board/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/arduino/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/core/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/include&quot;"/>
+							</option>
+							<inputType id="cdt.managedbuild.tool.gnu.c.compiler.input.2027786667" superClass="cdt.managedbuild.tool.gnu.c.compiler.input"/>
+						</tool>
+					</fileInfo>
 					<fileInfo id="com.nxp.s32ds.cle.arm.mbs.arm32.bare.gnu.10.2.exe.debug.260837327.584408079" name="mpu6050_demo.c" rcbsApplicability="disable" resourcePath="tests/example/src/mpu6050_demo.c" toolsToInvoke="com.nxp.s32ds.cle.arm.mbs.arm32.bare.gnu.9.2.tool.c.compiler.2127702581.1818663751">
 						<tool id="com.nxp.s32ds.cle.arm.mbs.arm32.bare.gnu.9.2.tool.c.compiler.2127702581.1818663751" name="Standard S32DS C Compiler" superClass="com.nxp.s32ds.cle.arm.mbs.arm32.bare.gnu.9.2.tool.c.compiler.2127702581">
-							<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="gnu.c.compiler.option.include.paths.94458867" superClass="gnu.c.compiler.option.include.paths" valueType="includePath">
+							<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="gnu.c.compiler.option.include.paths.94458867" name="Include paths (-I)" superClass="gnu.c.compiler.option.include.paths" valueType="includePath">
 								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/lpspi/inc&quot;"/>
 								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/LCD_TFT&quot;"/>
 								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/LCD&quot;"/>
@@ -255,6 +283,7 @@
 						<tool id="com.nxp.s32ds.cle.arm.mbs.arm32.bare.gnu.9.2.tool.c.compiler.1183557667.787632387" name="Standard S32DS C Compiler" superClass="com.nxp.s32ds.cle.arm.mbs.arm32.bare.gnu.9.2.tool.c.compiler.1183557667">
 							<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="gnu.c.compiler.option.include.paths.1061119668" name="Include paths (-I)" superClass="gnu.c.compiler.option.include.paths" useByScannerDiscovery="false" valueType="includePath">
 								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/drivers/lpspi/inc&quot;"/>
+								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/RFID&quot;"/>
 								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/MPU6050&quot;"/>
 								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/LCD_TFT&quot;"/>
 								<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../firmware/devices/LCD&quot;"/>
