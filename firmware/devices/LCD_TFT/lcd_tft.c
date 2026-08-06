@@ -227,3 +227,58 @@ void ST7789_FillRect(ST7789_t *tft, uint16_t x, uint16_t y, uint16_t w, uint16_t
 
     digitalWrite(tft->csPin, HIGH);
 }
+
+/* ========================================================================= */
+/* Text Rendering Helper Functions                                           */
+/* ========================================================================= */
+
+/**
+ * @brief Draw a single ASCII character onto the display.
+ */
+static void DrawChar(ST7789_t *tft, uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t size)
+{
+    /* Check coordinate limits and ASCII bounds */
+    if ((x >= tft->width) || (y >= tft->height)) return;
+    if ((c < 32) || (c > 122)) return;
+
+    for (int8_t i = 0; i < 5; i++)
+    {
+        uint8_t line = font5x7[c - 32][i];
+        for (int8_t j = 0; j < 8; j++, line >>= 1)
+        {
+            if (line & 1)
+            {
+                if (size == 1) ST7789_DrawPixel(tft, x + i, y + j, color);
+                else ST7789_FillRect(tft, x + (i * size), y + (j * size), size, size, color);
+            }
+            else if (bg != color)
+            {
+                if (size == 1) ST7789_DrawPixel(tft, x + i, y + j, bg);
+                else ST7789_FillRect(tft, x + (i * size), y + (j * size), size, size, bg);
+            }
+        }
+    }
+}
+
+/**
+ * @brief Draw a null-terminated string onto the display.
+ */
+static void DrawString(ST7789_t *tft, uint16_t x, uint16_t y, const char *str, uint16_t color, uint16_t bg, uint8_t size)
+{
+    uint16_t startX = x;
+    while (*str)
+    {
+        /* Support newline character \n */
+        if (*str == '\n')
+        {
+            y += 8 * size;
+            x = startX;
+        }
+        else
+        {
+            DrawChar(tft, x, y, *str, color, bg, size);
+            x += 6 * size; /* Font width (5 columns) + 1 spacing column */
+        }
+        str++;
+    }
+}
