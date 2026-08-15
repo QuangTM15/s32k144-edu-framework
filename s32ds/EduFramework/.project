@@ -27,12 +27,12 @@
 		<link>
 			<name>firmware</name>
 			<type>2</type>
-			<location>D:/S32K144_MaaZEDU_Framework/firmware</location>
+			<location>D:/S32K144_EDU/s32k144-edu-framework/firmware</location>
 		</link>
 		<link>
 			<name>tests</name>
 			<type>2</type>
-			<location>D:/S32K144_MaaZEDU_Framework/tests</location>
+			<location>D:/S32K144_EDU/s32k144-edu-framework/tests</location>
 		</link>
 	</linkedResources>
 </projectDescription>
