@@ -7,7 +7,7 @@
  *
  * This file provides low-level PORT configuration services, including
  * PORT clock enable, pin mux selection, internal pull resistor configuration,
- * and passive input filter control.
+ * passive input filter control, and pin interrupt configuration.
  */
 
 #include "S32K144.h"
@@ -16,7 +16,7 @@
 #include <stdbool.h>
 
 /* ========================================================================= */
-/* Type Definitions                                                           */
+/* Type Definitions                                                          */
 /* ========================================================================= */
 
 /**
@@ -34,8 +34,16 @@ typedef uint8_t port_mux_t;
  */
 typedef uint8_t port_pull_t;
 
+/**
+ * @brief PORT pin interrupt configuration type.
+ *
+ * @details
+ * Values correspond directly to the IRQC field of the PORT PCR register.
+ */
+typedef uint8_t port_interrupt_config_t;
+
 /* ========================================================================= */
-/* Macro Definitions                                                          */
+/* Macro Definitions                                                         */
 /* ========================================================================= */
 
 /**
@@ -62,6 +70,10 @@ typedef uint8_t port_pull_t;
  * @brief PORT E name.
  */
 #define PORT_NAME_E             ((port_name_t)4U)
+
+/* ========================================================================= */
+/* Pin Mux                                                                   */
+/* ========================================================================= */
 
 /**
  * @brief Pin mux disabled.
@@ -103,6 +115,10 @@ typedef uint8_t port_pull_t;
  */
 #define PORT_MUX_ALT7           ((port_mux_t)7U)
 
+/* ========================================================================= */
+/* Pull Configuration                                                        */
+/* ========================================================================= */
+
 /**
  * @brief Disable internal pull resistor.
  */
@@ -119,19 +135,50 @@ typedef uint8_t port_pull_t;
 #define PORT_PULL_UP            ((port_pull_t)2U)
 
 /* ========================================================================= */
-/* Public API Prototypes                                                      */
+/* Interrupt Configuration                                                   */
+/* ========================================================================= */
+
+/**
+ * @brief Disable pin interrupt and DMA request.
+ *
+ * @details
+ * PORT PCR IRQC = 0000.
+ */
+#define PORT_INTERRUPT_DISABLED       ((port_interrupt_config_t)0x0U)
+
+/**
+ * @brief Generate interrupt on rising edge.
+ *
+ * @details
+ * PORT PCR IRQC = 1001.
+ */
+#define PORT_INTERRUPT_RISING_EDGE    ((port_interrupt_config_t)0x9U)
+
+/**
+ * @brief Generate interrupt on falling edge.
+ *
+ * @details
+ * PORT PCR IRQC = 1010.
+ */
+#define PORT_INTERRUPT_FALLING_EDGE   ((port_interrupt_config_t)0xAU)
+
+/**
+ * @brief Generate interrupt on either edge.
+ *
+ * @details
+ * PORT PCR IRQC = 1011.
+ */
+#define PORT_INTERRUPT_EITHER_EDGE    ((port_interrupt_config_t)0xBU)
+
+/* ========================================================================= */
+/* Public API Prototypes                                                     */
 /* ========================================================================= */
 
 /**
  * @brief Enable clock for a PORT module.
  *
- * @details
- * This function enables the clock gate of PORTA, PORTB, PORTC, PORTD,
- * or PORTE through the Peripheral Clock Controller (PCC).
- *
  * @param[in] u8PortName
- * PORT name. Use PORT_NAME_A, PORT_NAME_B, PORT_NAME_C,
- * PORT_NAME_D, or PORT_NAME_E.
+ * PORT name. Use PORT_NAME_A through PORT_NAME_E.
  *
  * @return None.
  */
@@ -140,10 +187,6 @@ void PORT_EnableClock(port_name_t u8PortName);
 /**
  * @brief Configure pin mux function.
  *
- * @details
- * This function configures the MUX field in the PORT Pin Control Register
- * (PCR). The PORT clock must be enabled before calling this function.
- *
  * @param[in] pBase
  * Pointer to PORT peripheral base address.
  *
@@ -151,7 +194,7 @@ void PORT_EnableClock(port_name_t u8PortName);
  * Pin number inside the selected PORT module.
  *
  * @param[in] u8Mux
- * Pin mux selection. Use PORT_MUX_xxx macros.
+ * Pin mux selection.
  *
  * @return None.
  */
@@ -162,10 +205,6 @@ void PORT_SetPinMux(PORT_Type *pBase,
 /**
  * @brief Configure internal pull resistor.
  *
- * @details
- * This function configures the PE and PS bits in the PORT Pin Control
- * Register (PCR).
- *
  * @param[in] pBase
  * Pointer to PORT peripheral base address.
  *
@@ -173,8 +212,7 @@ void PORT_SetPinMux(PORT_Type *pBase,
  * Pin number inside the selected PORT module.
  *
  * @param[in] u8Pull
- * Pull configuration. Use PORT_PULL_DISABLED, PORT_PULL_DOWN,
- * or PORT_PULL_UP.
+ * Pull configuration.
  *
  * @return None.
  */
@@ -184,10 +222,6 @@ void PORT_SetPinPull(PORT_Type *pBase,
 
 /**
  * @brief Enable or disable passive input filter.
- *
- * @details
- * This function controls the Passive Filter Enable (PFE) bit in the PORT
- * Pin Control Register (PCR).
  *
  * @param[in] pBase
  * Pointer to PORT peripheral base address.
@@ -203,5 +237,102 @@ void PORT_SetPinPull(PORT_Type *pBase,
 void PORT_SetPassiveFilter(PORT_Type *pBase,
                            uint8_t u8Pin,
                            bool bEnable);
+
+/**
+ * @brief Configure interrupt generation for one PORT pin.
+ *
+ * @details
+ * This function programs the IRQC field in the selected pin PCR.
+ *
+ * Supported configurations:
+ * - PORT_INTERRUPT_DISABLED
+ * - PORT_INTERRUPT_RISING_EDGE
+ * - PORT_INTERRUPT_FALLING_EDGE
+ * - PORT_INTERRUPT_EITHER_EDGE
+ *
+ * This function configures only the PORT interrupt source. The corresponding
+ * NVIC interrupt line must be enabled separately through the IRQ module.
+ *
+ * @param[in] pBase
+ * Pointer to PORT peripheral base address.
+ *
+ * @param[in] u8Pin
+ * Pin number inside the selected PORT module.
+ *
+ * @param[in] u8Config
+ * Interrupt configuration.
+ *
+ * @return None.
+ */
+void PORT_SetPinInterruptConfig(PORT_Type *pBase,
+                                uint8_t u8Pin,
+                                port_interrupt_config_t u8Config);
+
+/**
+ * @brief Get all pending interrupt flags for a PORT module.
+ *
+ * @details
+ * Each set bit in ISFR indicates that the corresponding PORT pin has an
+ * active interrupt status flag.
+ *
+ * @param[in] pBase
+ * Pointer to PORT peripheral base address.
+ *
+ * @return Current PORT ISFR value.
+ * @retval 0U No interrupt flags are active or pBase is invalid.
+ */
+uint32_t PORT_GetInterruptFlags(PORT_Type *pBase);
+
+/**
+ * @brief Check the interrupt flag of one PORT pin.
+ *
+ * @param[in] pBase
+ * Pointer to PORT peripheral base address.
+ *
+ * @param[in] u8Pin
+ * Pin number inside the selected PORT module.
+ *
+ * @return uint8_t
+ * @retval 1U Interrupt flag is set.
+ * @retval 0U Interrupt flag is clear or pBase is invalid.
+ */
+uint8_t PORT_GetPinInterruptFlag(PORT_Type *pBase,
+                                 uint8_t u8Pin);
+
+/**
+ * @brief Clear the interrupt flag of one PORT pin.
+ *
+ * @details
+ * PORT ISFR flags are write-one-to-clear. Writing one to the selected bit
+ * clears that pin interrupt flag without clearing unrelated flags.
+ *
+ * @param[in] pBase
+ * Pointer to PORT peripheral base address.
+ *
+ * @param[in] u8Pin
+ * Pin number inside the selected PORT module.
+ *
+ * @return None.
+ */
+void PORT_ClearPinInterruptFlag(PORT_Type *pBase,
+                                uint8_t u8Pin);
+
+/**
+ * @brief Clear selected interrupt flags of a PORT module.
+ *
+ * @details
+ * Every set bit in u32Mask is written to ISFR. Because ISFR is
+ * write-one-to-clear, only the selected flags are cleared.
+ *
+ * @param[in] pBase
+ * Pointer to PORT peripheral base address.
+ *
+ * @param[in] u32Mask
+ * Bit mask of interrupt flags to clear.
+ *
+ * @return None.
+ */
+void PORT_ClearInterruptFlags(PORT_Type *pBase,
+                              uint32_t u32Mask);
 
 #endif /* PORT_H */

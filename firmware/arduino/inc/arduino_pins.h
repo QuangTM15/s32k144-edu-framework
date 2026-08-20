@@ -41,7 +41,7 @@
 #include <stdint.h>
 
 /* ========================================================================= */
-/* Logical Pin Definitions                                                    */
+/* Logical Pin Definitions                                                   */
 /* ========================================================================= */
 
 /**
@@ -114,7 +114,7 @@
 #define LED_BUILTIN           (LED_BLUE)
 
 /* ========================================================================= */
-/* Pin Role Definitions                                                       */
+/* Pin Role Definitions                                                      */
 /* ========================================================================= */
 
 /**
@@ -157,7 +157,7 @@ typedef uint8_t PinRole_t;
 #define PIN_ROLE_ADC          ((PinRole_t)5U)
 
 /* ========================================================================= */
-/* Pin Capability Definitions                                                 */
+/* Pin Capability Definitions                                                */
 /* ========================================================================= */
 
 /**
@@ -171,6 +171,7 @@ typedef uint8_t PinRole_t;
  * - PIN_CAP_DIGITAL allows pinMode(), digitalWrite(), digitalRead().
  * - PIN_CAP_ANALOG_IN allows analogRead().
  * - PIN_CAP_PWM allows analogWrite().
+ * - PIN_CAP_INTERRUPT allows attachInterrupt().
  */
 typedef uint8_t PinCapability_t;
 
@@ -194,8 +195,13 @@ typedef uint8_t PinCapability_t;
  */
 #define PIN_CAP_PWM           ((PinCapability_t)(1U << 2U))
 
+/**
+ * @brief Pin supports external interrupt operations.
+ */
+#define PIN_CAP_INTERRUPT     ((PinCapability_t)(1U << 3U))
+
 /* ========================================================================= */
-/* Common Return Values                                                       */
+/* Common Return Values                                                      */
 /* ========================================================================= */
 
 /**
@@ -214,7 +220,7 @@ typedef uint8_t PinCapability_t;
 #define ARDUINO_IS_VALID_PIN(u8Pin)    ((uint8_t)(u8Pin) < NUM_LOGICAL_PINS)
 
 /* ========================================================================= */
-/* Structure Definitions                                                      */
+/* Structure Definitions                                                     */
 /* ========================================================================= */
 
 /**
@@ -280,7 +286,7 @@ typedef struct
 } ArduinoPwmMap_t;
 
 /* ========================================================================= */
-/* Global Mapping Tables                                                      */
+/* Global Mapping Tables                                                     */
 /* ========================================================================= */
 
 /**
@@ -294,7 +300,7 @@ extern const ArduinoPinMap_t g_arduinoPinMap[NUM_LOGICAL_PINS];
 extern const ArduinoPwmMap_t g_arduinoPwmMap[NUM_LOGICAL_PINS];
 
 /* ========================================================================= */
-/* Public API Prototypes                                                      */
+/* Public API Prototypes                                                     */
 /* ========================================================================= */
 
 /**
@@ -344,6 +350,18 @@ uint8_t Arduino_HasAnalogInputCapability(uint8_t u8Pin);
  * @retval 0U Pin does not support PWM output or pin is invalid.
  */
 uint8_t Arduino_HasPwmCapability(uint8_t u8Pin);
+
+/**
+ * @brief Check whether a logical pin supports external interrupts.
+ *
+ * @param[in] u8Pin
+ * Logical Arduino pin number.
+ *
+ * @return uint8_t
+ * @retval 1U Pin supports external interrupt operations.
+ * @retval 0U Pin does not support interrupts or pin is invalid.
+ */
+uint8_t Arduino_HasInterruptCapability(uint8_t u8Pin);
 
 /**
  * @brief Get PWM mapping information for a logical pin.

@@ -30,7 +30,7 @@
 #include <stddef.h>
 
 /* ========================================================================= */
-/* Logical Pin Mapping Table                                                  */
+/* Logical Pin Mapping Table                                                 */
 /* ========================================================================= */
 
 /**
@@ -41,70 +41,89 @@
  *
  * The array index must match the logical pin value defined in arduino_pins.h.
  *
- * Example:
- *
- * @code
- * #define LED_RED (10U)
- *
- * g_arduinoPinMap[LED_RED]
- *     -> BOARD_LED_RED_PORT
- *     -> BOARD_LED_RED_GPIO
- *     -> BOARD_LED_RED_PIN
- * @endcode
+ * GPIO0 through GPIO9 expose interrupt capability so they may be used by
+ * future Arduino-style external interrupt APIs such as attachInterrupt().
  */
 const ArduinoPinMap_t g_arduinoPinMap[NUM_LOGICAL_PINS] =
 {
-    /* GPIO0: External GPIO header pin. */
+    /* GPIO0: Digital GPIO with interrupt capability. */
     { BOARD_GPIO0_PORT, BOARD_GPIO0_GPIO, BOARD_GPIO0_PIN,
-      PIN_ROLE_GPIO, PIN_CAP_DIGITAL },
+      PIN_ROLE_GPIO,
+      (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_INTERRUPT) },
 
-    /* GPIO1: External GPIO header pin. */
+    /* GPIO1: Digital GPIO with interrupt capability. */
     { BOARD_GPIO1_PORT, BOARD_GPIO1_GPIO, BOARD_GPIO1_PIN,
-      PIN_ROLE_GPIO, PIN_CAP_DIGITAL },
+      PIN_ROLE_GPIO,
+      (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_INTERRUPT) },
 
-    /* GPIO2: Digital GPIO with PWM capability. */
+    /* GPIO2: Digital GPIO with PWM and interrupt capability. */
     { BOARD_GPIO2_PORT, BOARD_GPIO2_GPIO, BOARD_GPIO2_PIN,
-      PIN_ROLE_GPIO, (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
+      PIN_ROLE_GPIO,
+      (PinCapability_t)(PIN_CAP_DIGITAL |
+                        PIN_CAP_PWM |
+                        PIN_CAP_INTERRUPT) },
 
-    /* GPIO3: Digital GPIO with PWM capability. */
+    /* GPIO3: Digital GPIO with PWM and interrupt capability. */
     { BOARD_GPIO3_PORT, BOARD_GPIO3_GPIO, BOARD_GPIO3_PIN,
-      PIN_ROLE_GPIO, (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
+      PIN_ROLE_GPIO,
+      (PinCapability_t)(PIN_CAP_DIGITAL |
+                        PIN_CAP_PWM |
+                        PIN_CAP_INTERRUPT) },
 
-    /* GPIO4: Digital GPIO with PWM capability. */
+    /* GPIO4: Digital GPIO with PWM and interrupt capability. */
     { BOARD_GPIO4_PORT, BOARD_GPIO4_GPIO, BOARD_GPIO4_PIN,
-      PIN_ROLE_GPIO, (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
+      PIN_ROLE_GPIO,
+      (PinCapability_t)(PIN_CAP_DIGITAL |
+                        PIN_CAP_PWM |
+                        PIN_CAP_INTERRUPT) },
 
-    /* GPIO5: Digital GPIO with PWM capability. */
+    /* GPIO5: Digital GPIO with PWM and interrupt capability. */
     { BOARD_GPIO5_PORT, BOARD_GPIO5_GPIO, BOARD_GPIO5_PIN,
-      PIN_ROLE_GPIO, (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
+      PIN_ROLE_GPIO,
+      (PinCapability_t)(PIN_CAP_DIGITAL |
+                        PIN_CAP_PWM |
+                        PIN_CAP_INTERRUPT) },
 
-    /* GPIO6: Digital GPIO with PWM capability. */
+    /* GPIO6: Digital GPIO with PWM and interrupt capability. */
     { BOARD_GPIO6_PORT, BOARD_GPIO6_GPIO, BOARD_GPIO6_PIN,
-      PIN_ROLE_GPIO, (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
+      PIN_ROLE_GPIO,
+      (PinCapability_t)(PIN_CAP_DIGITAL |
+                        PIN_CAP_PWM |
+                        PIN_CAP_INTERRUPT) },
 
-    /* GPIO7: Digital GPIO with PWM capability. */
+    /* GPIO7: Digital GPIO with PWM and interrupt capability. */
     { BOARD_GPIO7_PORT, BOARD_GPIO7_GPIO, BOARD_GPIO7_PIN,
-      PIN_ROLE_GPIO, (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
+      PIN_ROLE_GPIO,
+      (PinCapability_t)(PIN_CAP_DIGITAL |
+                        PIN_CAP_PWM |
+                        PIN_CAP_INTERRUPT) },
 
-    /* GPIO8: Digital GPIO with PWM capability. */
+    /* GPIO8: Digital GPIO with PWM and interrupt capability. */
     { BOARD_GPIO8_PORT, BOARD_GPIO8_GPIO, BOARD_GPIO8_PIN,
-      PIN_ROLE_GPIO, (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
+      PIN_ROLE_GPIO,
+      (PinCapability_t)(PIN_CAP_DIGITAL |
+                        PIN_CAP_PWM |
+                        PIN_CAP_INTERRUPT) },
 
-    /* GPIO9: External GPIO header pin. */
+    /* GPIO9: Digital GPIO with interrupt capability. */
     { BOARD_GPIO9_PORT, BOARD_GPIO9_GPIO, BOARD_GPIO9_PIN,
-      PIN_ROLE_GPIO, PIN_CAP_DIGITAL },
+      PIN_ROLE_GPIO,
+      (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_INTERRUPT) },
 
     /* LED_RED: On-board red LED. */
     { BOARD_LED_RED_PORT, BOARD_LED_RED_GPIO, BOARD_LED_RED_PIN,
-      PIN_ROLE_LED, (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
+      PIN_ROLE_LED,
+      (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
 
     /* LED_BLUE: On-board blue LED and default LED_BUILTIN. */
     { BOARD_LED_BLUE_PORT, BOARD_LED_BLUE_GPIO, BOARD_LED_BLUE_PIN,
-      PIN_ROLE_LED, (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
+      PIN_ROLE_LED,
+      (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
 
     /* LED_GREEN: On-board green LED. */
     { BOARD_LED_GREEN_PORT, BOARD_LED_GREEN_GPIO, BOARD_LED_GREEN_PIN,
-      PIN_ROLE_LED, (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
+      PIN_ROLE_LED,
+      (PinCapability_t)(PIN_CAP_DIGITAL | PIN_CAP_PWM) },
 
     /* BTN0: On-board mechanical button. */
     { BOARD_BUTTON0_PORT, BOARD_BUTTON0_GPIO, BOARD_BUTTON0_PIN,
@@ -148,7 +167,7 @@ const ArduinoPinMap_t g_arduinoPinMap[NUM_LOGICAL_PINS] =
 };
 
 /* ========================================================================= */
-/* PWM Mapping Table                                                          */
+/* PWM Mapping Table                                                         */
 /* ========================================================================= */
 
 /**
@@ -233,17 +252,13 @@ const ArduinoPwmMap_t g_arduinoPwmMap[NUM_LOGICAL_PINS] =
 };
 
 /* ========================================================================= */
-/* Public Functions                                                           */
+/* Public Functions                                                          */
 /* ========================================================================= */
 
 uint8_t Arduino_IsValidPin(uint8_t u8Pin)
 {
     uint8_t u8RetVal = ARDUINO_VALID_FALSE;
 
-    /*
-     * Logical pin numbers are used as direct indexes into g_arduinoPinMap[].
-     * Therefore, the pin must be smaller than NUM_LOGICAL_PINS.
-     */
     if (ARDUINO_IS_VALID_PIN(u8Pin))
     {
         u8RetVal = ARDUINO_VALID_TRUE;
@@ -260,10 +275,6 @@ uint8_t Arduino_HasDigitalCapability(uint8_t u8Pin)
 {
     uint8_t u8RetVal = ARDUINO_VALID_FALSE;
 
-    /*
-     * Capability flags are valid only if the logical pin index is valid.
-     * This prevents out-of-range access to g_arduinoPinMap[].
-     */
     if (ARDUINO_VALID_TRUE == Arduino_IsValidPin(u8Pin))
     {
         if (0U != (g_arduinoPinMap[u8Pin].capability & PIN_CAP_DIGITAL))
@@ -287,9 +298,6 @@ uint8_t Arduino_HasAnalogInputCapability(uint8_t u8Pin)
 {
     uint8_t u8RetVal = ARDUINO_VALID_FALSE;
 
-    /*
-     * Analog capability is used by analogRead() and related ADC helpers.
-     */
     if (ARDUINO_VALID_TRUE == Arduino_IsValidPin(u8Pin))
     {
         if (0U != (g_arduinoPinMap[u8Pin].capability & PIN_CAP_ANALOG_IN))
@@ -313,14 +321,36 @@ uint8_t Arduino_HasPwmCapability(uint8_t u8Pin)
 {
     uint8_t u8RetVal = ARDUINO_VALID_FALSE;
 
-    /*
-     * PWM capability is checked before reading g_arduinoPwmMap[].
-     * Non-PWM pins still have placeholder PWM entries, but those entries
-     * must not be used by analogWrite().
-     */
     if (ARDUINO_VALID_TRUE == Arduino_IsValidPin(u8Pin))
     {
         if (0U != (g_arduinoPinMap[u8Pin].capability & PIN_CAP_PWM))
+        {
+            u8RetVal = ARDUINO_VALID_TRUE;
+        }
+        else
+        {
+            u8RetVal = ARDUINO_VALID_FALSE;
+        }
+    }
+    else
+    {
+        u8RetVal = ARDUINO_VALID_FALSE;
+    }
+
+    return u8RetVal;
+}
+
+uint8_t Arduino_HasInterruptCapability(uint8_t u8Pin)
+{
+    uint8_t u8RetVal = ARDUINO_VALID_FALSE;
+
+    /*
+     * Interrupt capability is stored in the same logical pin capability
+     * field used by digital, analog, and PWM capability checks.
+     */
+    if (ARDUINO_VALID_TRUE == Arduino_IsValidPin(u8Pin))
+    {
+        if (0U != (g_arduinoPinMap[u8Pin].capability & PIN_CAP_INTERRUPT))
         {
             u8RetVal = ARDUINO_VALID_TRUE;
         }
@@ -342,20 +372,13 @@ uint8_t Arduino_GetPwmMap(uint8_t u8Pin,
 {
     uint8_t u8RetVal = ARDUINO_VALID_FALSE;
 
-    /*
-     * The output pointer must be valid because the function copies the PWM
-     * mapping entry into the caller-provided structure.
-     */
     if ((ARDUINO_VALID_TRUE == Arduino_IsValidPin(u8Pin)) &&
         (NULL != pPwmMap))
     {
-        /*
-         * Only pins explicitly marked with PIN_CAP_PWM are allowed to expose
-         * PWM mapping information to analogWrite().
-         */
         if (ARDUINO_VALID_TRUE == Arduino_HasPwmCapability(u8Pin))
         {
             *pPwmMap = g_arduinoPwmMap[u8Pin];
+
             u8RetVal = ARDUINO_VALID_TRUE;
         }
         else

@@ -11,7 +11,16 @@
 #include <stddef.h>
 
 /* ========================================================================= */
-/* Public Functions                                                           */
+/* Private Macros                                                            */
+/* ========================================================================= */
+
+/**
+ * @brief Create a bit mask for one PORT pin.
+ */
+#define PORT_PIN_MASK(u8Pin)    (1UL << (u8Pin))
+
+/* ========================================================================= */
+/* Public Functions                                                          */
 /* ========================================================================= */
 
 void PORT_EnableClock(port_name_t u8PortName)
@@ -19,32 +28,27 @@ void PORT_EnableClock(port_name_t u8PortName)
     switch (u8PortName)
     {
         case PORT_NAME_A:
-            /* Enable clock gate for PORTA through PCC. */
             IP_PCC->PCCn[PCC_PORTA_INDEX] |= PCC_PCCn_CGC_MASK;
             break;
 
         case PORT_NAME_B:
-            /* Enable clock gate for PORTB through PCC. */
             IP_PCC->PCCn[PCC_PORTB_INDEX] |= PCC_PCCn_CGC_MASK;
             break;
 
         case PORT_NAME_C:
-            /* Enable clock gate for PORTC through PCC. */
             IP_PCC->PCCn[PCC_PORTC_INDEX] |= PCC_PCCn_CGC_MASK;
             break;
 
         case PORT_NAME_D:
-            /* Enable clock gate for PORTD through PCC. */
             IP_PCC->PCCn[PCC_PORTD_INDEX] |= PCC_PCCn_CGC_MASK;
             break;
 
         case PORT_NAME_E:
-            /* Enable clock gate for PORTE through PCC. */
             IP_PCC->PCCn[PCC_PORTE_INDEX] |= PCC_PCCn_CGC_MASK;
             break;
 
         default:
-            /* Invalid PORT name. Keep previous behavior: do nothing. */
+            /* Invalid PORT name. */
             break;
     }
 
@@ -57,16 +61,12 @@ void PORT_SetPinMux(PORT_Type *pBase,
 {
     if (NULL != pBase)
     {
-        /*
-         * PCR[MUX] selects the pin function.
-         * Clear the current MUX field before programming the new function.
-         */
         pBase->PCR[u8Pin] &= ~PORT_PCR_MUX_MASK;
         pBase->PCR[u8Pin] |= PORT_PCR_MUX((uint32_t)u8Mux);
     }
     else
     {
-        /* Invalid PORT base pointer. Keep previous behavior: do nothing. */
+        /* Invalid PORT base pointer. */
     }
 
     return;
@@ -81,39 +81,27 @@ void PORT_SetPinPull(PORT_Type *pBase,
         switch (u8Pull)
         {
             case PORT_PULL_DISABLED:
-                /*
-                 * PE = 0 disables the internal pull resistor.
-                 * PS value is ignored while PE is disabled.
-                 */
                 pBase->PCR[u8Pin] &= ~PORT_PCR_PE_MASK;
                 break;
 
             case PORT_PULL_DOWN:
-                /*
-                 * PE = 1 enables internal pull resistor.
-                 * PS = 0 selects pull-down.
-                 */
                 pBase->PCR[u8Pin] |= PORT_PCR_PE_MASK;
                 pBase->PCR[u8Pin] &= ~PORT_PCR_PS_MASK;
                 break;
 
             case PORT_PULL_UP:
-                /*
-                 * PE = 1 enables internal pull resistor.
-                 * PS = 1 selects pull-up.
-                 */
                 pBase->PCR[u8Pin] |= PORT_PCR_PE_MASK;
                 pBase->PCR[u8Pin] |= PORT_PCR_PS_MASK;
                 break;
 
             default:
-                /* Invalid pull configuration. Keep previous behavior: do nothing. */
+                /* Invalid pull configuration. */
                 break;
         }
     }
     else
     {
-        /* Invalid PORT base pointer. Keep previous behavior: do nothing. */
+        /* Invalid PORT base pointer. */
     }
 
     return;
@@ -127,18 +115,119 @@ void PORT_SetPassiveFilter(PORT_Type *pBase,
     {
         if (true == bEnable)
         {
-            /* PFE = 1 enables passive input filter on the selected pin. */
             pBase->PCR[u8Pin] |= PORT_PCR_PFE_MASK;
         }
         else
         {
-            /* PFE = 0 disables passive input filter on the selected pin. */
             pBase->PCR[u8Pin] &= ~PORT_PCR_PFE_MASK;
         }
     }
     else
     {
-        /* Invalid PORT base pointer. Keep previous behavior: do nothing. */
+        /* Invalid PORT base pointer. */
+    }
+
+    return;
+}
+
+void PORT_SetPinInterruptConfig(PORT_Type *pBase,
+                                uint8_t u8Pin,
+                                port_interrupt_config_t u8Config)
+{
+    if (NULL != pBase)
+    {
+        /*
+         * PCR[IRQC] controls interrupt/DMA generation for the selected pin.
+         * Preserve all unrelated PCR fields.
+         */
+        pBase->PCR[u8Pin] &= ~PORT_PCR_IRQC_MASK;
+        pBase->PCR[u8Pin] |= PORT_PCR_IRQC((uint32_t)u8Config);
+    }
+    else
+    {
+        /* Invalid PORT base pointer. */
+    }
+
+    return;
+}
+
+uint32_t PORT_GetInterruptFlags(PORT_Type *pBase)
+{
+    uint32_t u32Flags = 0U;
+
+    if (NULL != pBase)
+    {
+        /*
+         * ISFR contains one interrupt status flag for each PORT pin.
+         */
+        u32Flags = pBase->ISFR;
+    }
+    else
+    {
+        u32Flags = 0U;
+    }
+
+    return u32Flags;
+}
+
+uint8_t PORT_GetPinInterruptFlag(PORT_Type *pBase,
+                                 uint8_t u8Pin)
+{
+    uint8_t u8Flag = 0U;
+
+    if (NULL != pBase)
+    {
+        if (0U != (pBase->ISFR & PORT_PIN_MASK(u8Pin)))
+        {
+            u8Flag = 1U;
+        }
+        else
+        {
+            u8Flag = 0U;
+        }
+    }
+    else
+    {
+        u8Flag = 0U;
+    }
+
+    return u8Flag;
+}
+
+void PORT_ClearPinInterruptFlag(PORT_Type *pBase,
+                                uint8_t u8Pin)
+{
+    if (NULL != pBase)
+    {
+        /*
+         * ISFR is write-one-to-clear.
+         */
+        pBase->ISFR = PORT_PIN_MASK(u8Pin);
+    }
+    else
+    {
+        /* Invalid PORT base pointer. */
+    }
+
+    return;
+}
+
+void PORT_ClearInterruptFlags(PORT_Type *pBase,
+                              uint32_t u32Mask)
+{
+    if (NULL != pBase)
+    {
+        /*
+         * ISFR is write-one-to-clear.
+         *
+         * Write the captured pending mask directly so that only the
+         * corresponding interrupt flags are cleared.
+         */
+        pBase->ISFR = u32Mask;
+    }
+    else
+    {
+        /* Invalid PORT base pointer. */
     }
 
     return;
