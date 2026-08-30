@@ -11,11 +11,11 @@
  *
  * The IRQ module is responsible for:
  * - Configuring NVIC interrupt lines.
- * - Registering simple interrupt callbacks.
+ * - Registering simple interrupt callbacks where required.
  * - Declaring ISR entry points used by the startup vector table.
  *
  * This module acts as a bridge between hardware interrupt vectors and
- * low-level driver handlers.
+ * low-level drivers or device handlers.
  */
 
 #include <stdint.h>
@@ -30,145 +30,138 @@
  */
 typedef void (*irq_callback_t)(void);
 
+/* ========================================================================= */
+/* LPIT0                                                                     */
+/* ========================================================================= */
+
+void IRQ_LPIT0_Ch0_Init(void);
+
+void IRQ_LPIT0_Ch0_SetCallback(irq_callback_t pfCallback);
+
+/* ========================================================================= */
+/* LPUART                                                                    */
+/* ========================================================================= */
+
+void IRQ_LPUART1_RxTx_Init(void);
+
+void IRQ_LPUART2_RxTx_Init(void);
+
+/* ========================================================================= */
+/* ADC                                                                       */
+/* ========================================================================= */
+
+void IRQ_ADC0_Init(void);
+
+/* ========================================================================= */
+/* LPI2C                                                                     */
+/* ========================================================================= */
+
+void IRQ_LPI2C0_Master_Init(void);
+
+void IRQ_LPI2C0_Slave_Init(void);
+
+/* ========================================================================= */
+/* PORT                                                                      */
+/* ========================================================================= */
+
 /**
- * @brief Initialize NVIC configuration for LPIT0 channel 0 interrupt.
+ * @brief Initialize NVIC configuration for PORTD interrupt.
  *
  * @details
- * This function clears any pending LPIT0 channel 0 interrupt request,
- * configures the interrupt priority, and enables the interrupt in NVIC.
+ * This function clears any pending PORTD interrupt request, configures
+ * the interrupt priority, and enables the PORTD interrupt line in NVIC.
  *
- * The LPIT peripheral interrupt enable bit is configured separately by
- * the LPIT driver.
+ * Individual PORTD pin interrupt sources are configured separately by
+ * the PORT driver through PCR[IRQC].
  *
  * @return None.
  */
-void IRQ_LPIT0_Ch0_Init(void);
+void IRQ_PORTD_Init(void);
 
 /**
- * @brief Register callback for LPIT0 channel 0 interrupt.
+ * @brief Register callback for PORTD interrupt.
  *
  * @details
- * The registered callback is executed from LPIT0_Ch0_IRQHandler()
- * after the LPIT timeout flag is cleared.
+ * The callback is executed directly from PORTD_IRQHandler().
  *
- * Passing a null callback disables the callback.
+ * The callback is responsible for reading and clearing the relevant PORTD
+ * interrupt flags through the PORT driver.
+ *
+ * Passing a null callback disables callback execution.
  *
  * @param[in] pfCallback
  * Pointer to callback function.
  *
  * @return None.
  */
-void IRQ_LPIT0_Ch0_SetCallback(irq_callback_t pfCallback);
+void IRQ_PORTD_SetCallback(irq_callback_t pfCallback);
 
 /**
- * @brief Initialize NVIC configuration for LPUART1 Rx/Tx interrupt.
+ * @brief Initialize NVIC configuration for PORTE interrupt.
  *
  * @details
- * This function enables the LPUART1 Rx/Tx interrupt line in NVIC.
+ * This function clears any pending PORTE interrupt request, configures
+ * the interrupt priority, and enables the PORTE interrupt line in NVIC.
+ *
+ * Individual PORTE pin interrupt sources are configured separately by
+ * the PORT driver through PCR[IRQC].
  *
  * @return None.
  */
-void IRQ_LPUART1_RxTx_Init(void);
+void IRQ_PORTE_Init(void);
 
 /**
- * @brief Initialize NVIC configuration for LPUART2 Rx/Tx interrupt.
+ * @brief Register callback for PORTE interrupt.
  *
  * @details
- * This function enables the LPUART2 Rx/Tx interrupt line in NVIC.
+ * The callback is executed directly from PORTE_IRQHandler().
+ *
+ * The callback is responsible for reading and clearing the relevant PORTE
+ * interrupt flags through the PORT driver.
+ *
+ * Passing a null callback disables callback execution.
+ *
+ * @param[in] pfCallback
+ * Pointer to callback function.
  *
  * @return None.
  */
-void IRQ_LPUART2_RxTx_Init(void);
+void IRQ_PORTE_SetCallback(irq_callback_t pfCallback);
 
-/**
- * @brief Initialize NVIC configuration for ADC0 interrupt.
- *
- * @details
- * This function enables the ADC0 interrupt line in NVIC.
- *
- * @return None.
- */
-void IRQ_ADC0_Init(void);
+/* ========================================================================= */
+/* ISR Declarations                                                          */
+/* ========================================================================= */
 
-/**
- * @brief Initialize NVIC configuration for LPI2C0 master interrupt.
- *
- * @details
- * This function enables the LPI2C0 master interrupt line in NVIC.
- *
- * @return None.
- */
-void IRQ_LPI2C0_Master_Init(void);
-
-/**
- * @brief Initialize NVIC configuration for LPI2C0 slave interrupt.
- *
- * @details
- * This function enables the LPI2C0 slave interrupt line in NVIC.
- *
- * @return None.
- */
-void IRQ_LPI2C0_Slave_Init(void);
-
-/**
- * @brief LPIT0 channel 0 interrupt service routine.
- *
- * @details
- * This ISR clears the LPIT0 channel 0 timeout flag and executes the
- * registered LPIT callback if available.
- *
- * @return None.
- */
 void LPIT0_Ch0_IRQHandler(void);
 
-/**
- * @brief LPUART1 Rx/Tx interrupt service routine.
- *
- * @details
- * This ISR delegates interrupt processing to the LPUART driver.
- *
- * @return None.
- */
 void LPUART1_RxTx_IRQHandler(void);
 
-/**
- * @brief LPUART2 Rx/Tx interrupt service routine.
- *
- * @details
- * This ISR delegates interrupt processing to the LPUART driver.
- *
- * @return None.
- */
 void LPUART2_RxTx_IRQHandler(void);
 
-/**
- * @brief ADC0 interrupt service routine.
- *
- * @details
- * This ISR delegates interrupt processing to the ADC driver.
- *
- * @return None.
- */
 void ADC0_IRQHandler(void);
 
-/**
- * @brief LPI2C0 master interrupt service routine.
- *
- * @details
- * This ISR delegates interrupt processing to the LPI2C master driver.
- *
- * @return None.
- */
 void LPI2C0_Master_IRQHandler(void);
 
+void LPI2C0_Slave_IRQHandler(void);
+
 /**
- * @brief LPI2C0 slave interrupt service routine.
+ * @brief PORTD interrupt service routine.
  *
  * @details
- * This ISR delegates interrupt processing to the LPI2C slave driver.
+ * This ISR executes the registered PORTD callback.
  *
  * @return None.
  */
-void LPI2C0_Slave_IRQHandler(void);
+void PORTD_IRQHandler(void);
+
+/**
+ * @brief PORTE interrupt service routine.
+ *
+ * @details
+ * This ISR executes the registered PORTE callback.
+ *
+ * @return None.
+ */
+void PORTE_IRQHandler(void);
 
 #endif /* IRQ_H */

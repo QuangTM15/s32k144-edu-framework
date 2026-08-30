@@ -160,4 +160,19 @@ void LPIT_EnableInterrupt(uint8_t u8Channel);
  */
 void LPIT_DisableInterrupt(uint8_t u8Channel);
 
+/**
+ * @brief Get current counter value of an LPIT timer channel.
+ *
+ * @param[in] u8Channel
+ * LPIT channel index.
+ *
+ * @return uint32_t
+ * Current counter value.
+ *
+ * @retval 0U
+ * Invalid channel.
+ */
+uint32_t LPIT_GetCurrentValue(uint8_t u8Channel);
+
+
 #endif /* LPIT_H */

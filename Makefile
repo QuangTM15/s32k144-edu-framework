@@ -1,11 +1,30 @@
 # ============================================================
-# EduFramework_v2 Makefile
+# EduFramework v2.0.0 Makefile
 # Target  : NXP S32K144 / MaaZEDU
 # Purpose : Build EduFramework static library package
 #
-# Output:
+# Generated package:
 #   eduframework/include/*.h
 #   eduframework/lib/libeduframework.a
+#
+# Source structure supported:
+#
+#   firmware/
+#   ├── arduino/
+#   │   ├── inc/
+#   │   └── src/
+#   ├── board/
+#   │   └── inc/
+#   ├── core/
+#   │   └── inc/
+#   ├── drivers/
+#   │   └── <driver>/
+#   │       ├── inc/
+#   │       └── src/
+#   └── devices/
+#       └── <device>/
+#           ├── device.c
+#           └── device.h
 #
 # Environment:
 #   Windows PowerShell
@@ -19,8 +38,11 @@
 # ============================================================
 
 # GNU Arm Embedded Toolchain directory from S32 Design Studio.
-# This can be overridden from command line if needed:
+#
+# Override example:
+#
 #   make TOOLCHAIN_DIR=C:/path/to/toolchain/bin
+#
 TOOLCHAIN_DIR ?= C:/NXP/S32DS.3.5/S32DS/build_tools/gcc_v10.2/gcc-10.2-arm32-eabi/bin
 
 # C compiler.
@@ -29,7 +51,7 @@ CC := $(TOOLCHAIN_DIR)/arm-none-eabi-gcc.exe
 # Static library archiver.
 AR := $(TOOLCHAIN_DIR)/arm-none-eabi-ar.exe
 
-# Size utility for optional inspection.
+# Size utility.
 SIZE := $(TOOLCHAIN_DIR)/arm-none-eabi-size.exe
 
 
@@ -37,10 +59,10 @@ SIZE := $(TOOLCHAIN_DIR)/arm-none-eabi-size.exe
 # Project Directories
 # ============================================================
 
-# Main framework source directory.
+# Framework source root.
 FIRMWARE_DIR := firmware
 
-# S32K144 device header directory.
+# S32K144 CMSIS/device headers supplied by the S32DS project.
 S32DS_INCLUDE_DIR := s32ds/EduFramework/include
 
 # Temporary build directory.
@@ -49,16 +71,16 @@ BUILD_DIR := build
 # Object file directory.
 OBJ_DIR := $(BUILD_DIR)/obj
 
-# Packaged framework output directory.
+# Exported framework package.
 PACKAGE_DIR := eduframework
 
-# Public exported header directory.
+# Exported public headers.
 PACKAGE_INC_DIR := $(PACKAGE_DIR)/include
 
-# Static library output directory.
+# Exported static library.
 PACKAGE_LIB_DIR := $(PACKAGE_DIR)/lib
 
-# Final static library output file.
+# Final library file.
 TARGET_LIB := $(PACKAGE_LIB_DIR)/libeduframework.a
 
 
@@ -66,25 +88,96 @@ TARGET_LIB := $(PACKAGE_LIB_DIR)/libeduframework.a
 # Automatic Source Discovery
 # ============================================================
 
-# Find all .c files under firmware/.
-# These files are compiled into object files.
-C_SOURCES := $(shell powershell -NoProfile -Command "Get-ChildItem '$(FIRMWARE_DIR)' -Recurse -Filter *.c | ForEach-Object { $$_.FullName.Replace((Get-Location).Path + '\','').Replace('\','/') }")
+# ------------------------------------------------------------
+# C Sources
+# ------------------------------------------------------------
+#
+# Discover every .c file recursively under firmware/.
+#
+# Examples:
+#
+#   firmware/arduino/src/Arduino.c
+#   firmware/drivers/gpio/src/gpio.c
+#   firmware/devices/NTC/ntc.c
+#   firmware/devices/RFID/rc522.c
+#
+# Every discovered source is compiled into libeduframework.a.
+#
+C_SOURCES := $(shell powershell -NoProfile -Command \
+	"Get-ChildItem '$(FIRMWARE_DIR)' -Recurse -File -Filter *.c | \
+	ForEach-Object { \
+		$$_.FullName.Replace((Get-Location).Path + '\','').Replace('\','/') \
+	}")
 
-# Find all .h files under firmware/.
-# These files are exported into eduframework/include/.
-H_SOURCES := $(shell powershell -NoProfile -Command "Get-ChildItem '$(FIRMWARE_DIR)' -Recurse -Filter *.h | ForEach-Object { $$_.FullName.Replace((Get-Location).Path + '\','').Replace('\','/') }")
 
-# Find all include folders named inc under firmware/.
-# Every inc folder is added to compiler include paths.
-INC_DIRS := $(shell powershell -NoProfile -Command "Get-ChildItem '$(FIRMWARE_DIR)' -Recurse -Directory -Filter inc | ForEach-Object { $$_.FullName.Replace((Get-Location).Path + '\','').Replace('\','/') }")
+# ------------------------------------------------------------
+# Header Sources
+# ------------------------------------------------------------
+#
+# Discover every .h file recursively under firmware/.
+#
+# Every discovered header is exported into:
+#
+#   eduframework/include/
+#
+H_SOURCES := $(shell powershell -NoProfile -Command \
+	"Get-ChildItem '$(FIRMWARE_DIR)' -Recurse -File -Filter *.h | \
+	ForEach-Object { \
+		$$_.FullName.Replace((Get-Location).Path + '\','').Replace('\','/') \
+	}")
 
-# Convert firmware/x/y/file.c into build/obj/firmware/x/y/file.o.
+
+# ------------------------------------------------------------
+# Include Directories
+# ------------------------------------------------------------
+#
+# Discover every directory that contains at least one .h file.
+#
+# This intentionally supports BOTH framework layouts:
+#
+# Traditional driver layout:
+#
+#   firmware/drivers/gpio/inc/gpio.h
+#
+# Device layout:
+#
+#   firmware/devices/NTC/ntc.h
+#
+# Duplicate directories are removed automatically.
+#
+INC_DIRS := $(shell powershell -NoProfile -Command \
+	"Get-ChildItem '$(FIRMWARE_DIR)' -Recurse -File -Filter *.h | \
+	ForEach-Object { \
+		$$_.DirectoryName.Replace((Get-Location).Path + '\','').Replace('\','/') \
+	} | Sort-Object -Unique")
+
+
+# ------------------------------------------------------------
+# Object Files
+# ------------------------------------------------------------
+#
+# Preserve the original firmware directory structure inside
+# build/obj/ to prevent object filename collisions.
+#
+# Example:
+#
+#   firmware/devices/NTC/ntc.c
+#
+# becomes:
+#
+#   build/obj/firmware/devices/NTC/ntc.o
+#
 OBJECTS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(C_SOURCES))
 
-# Convert include folder list into -I compiler flags.
+
+# ------------------------------------------------------------
+# Compiler Include Flags
+# ------------------------------------------------------------
+
+# Add all automatically discovered framework header directories.
 INCLUDES := $(addprefix -I,$(INC_DIRS))
 
-# Add S32K144 device headers from S32DS project.
+# Add S32K144 device/CMSIS header directory.
 INCLUDES += -I$(S32DS_INCLUDE_DIR)
 
 
@@ -92,18 +185,20 @@ INCLUDES += -I$(S32DS_INCLUDE_DIR)
 # Compiler Configuration
 # ============================================================
 
-# Cortex-M4F CPU options for S32K144.
+# Cortex-M4F configuration for S32K144.
 CPU_FLAGS := \
 	-mcpu=cortex-m4 \
 	-mthumb \
 	-mfpu=fpv4-sp-d16 \
 	-mfloat-abi=hard
 
-# Device macro expected by S32K144 headers.
+
+# Device macro expected by the NXP S32K144 headers.
 DEFINES := \
 	-DCPU_S32K144HFT0VLLT
 
-# Common C compiler flags.
+
+# Common compiler flags.
 CFLAGS := \
 	$(CPU_FLAGS) \
 	$(DEFINES) \
@@ -117,6 +212,7 @@ CFLAGS := \
 	-Wextra \
 	-Wno-unused-parameter
 
+
 # Static library archiver flags.
 ARFLAGS := rcs
 
@@ -127,9 +223,10 @@ ARFLAGS := rcs
 
 # make
 #
-# Build complete package:
-#   - libeduframework.a
-#   - exported public headers
+# Equivalent to:
+#
+#   make package
+#
 .PHONY: all
 all: package
 
@@ -140,15 +237,20 @@ all: package
 
 # make package
 #
-# Build the static library and export all public headers.
-# This is the main target used before committing/releasing
-# a new framework package.
+# Generates:
+#
+#   eduframework/include/*.h
+#   eduframework/lib/libeduframework.a
+#
 .PHONY: package
 package: lib headers
 	@echo.
-	@echo [DONE] EduFramework package generated.
+	@echo ============================================================
+	@echo [DONE] EduFramework package generated
+	@echo ============================================================
 	@echo [LIB ] $(TARGET_LIB)
 	@echo [INC ] $(PACKAGE_INC_DIR)
+	@echo.
 
 
 # ============================================================
@@ -157,16 +259,24 @@ package: lib headers
 
 # make lib
 #
-# Compile all firmware/*.c files and archive them into
-# eduframework/lib/libeduframework.a.
+# Compile every firmware/*.c source and archive all resulting
+# objects into libeduframework.a.
+#
 .PHONY: lib
 lib: $(TARGET_LIB)
 
-# Create static library from all object files.
+
+# Build final static library.
 $(TARGET_LIB): $(OBJECTS)
 	@echo.
-	@echo [AR  ] $@
+	@echo ============================================================
+	@echo [AR  ] Creating static library
+	@echo ============================================================
+	@echo [OUT ] $@
+	@echo.
+
 	@if not exist "$(subst /,\,$(PACKAGE_LIB_DIR))" mkdir "$(subst /,\,$(PACKAGE_LIB_DIR))"
+
 	$(AR) $(ARFLAGS) $@ $(OBJECTS)
 
 
@@ -174,12 +284,21 @@ $(TARGET_LIB): $(OBJECTS)
 # Compile Rule
 # ============================================================
 
-# Compile each .c file into a matching .o file under build/obj/.
-# The original source tree layout is preserved inside build/obj/
-# to avoid object-name collisions.
+# Compile each C source into its corresponding object file.
+#
+# Source:
+#
+#   firmware/x/y/file.c
+#
+# Output:
+#
+#   build/obj/firmware/x/y/file.o
+#
 $(OBJ_DIR)/%.o: %.c
 	@echo [CC  ] $<
+
 	@if not exist "$(subst /,\,$(dir $@))" mkdir "$(subst /,\,$(dir $@))"
+
 	$(CC) $(CFLAGS) -c $< -o $@
 
 
@@ -189,19 +308,33 @@ $(OBJ_DIR)/%.o: %.c
 
 # make headers
 #
-# Export all firmware/*.h files into eduframework/include/.
+# Export every firmware/*.h header into a flat public include
+# directory:
 #
-# Note:
-#   This exports headers into a flat include directory.
-#   Current project header names are unique, so this is OK.
-#   If future HAL/sensor modules introduce duplicate header
-#   names, header export should be changed to preserve folders.
+#   eduframework/include/
+#
+# Current framework headers have unique filenames.
+#
+# IMPORTANT:
+# If duplicate public header filenames are introduced in the
+# future, this export strategy must be changed to preserve the
+# source directory hierarchy.
+#
 .PHONY: headers
 headers:
 	@echo.
-	@echo [HDR ] Exporting public headers...
+	@echo ============================================================
+	@echo [HDR ] Exporting framework headers
+	@echo ============================================================
+
 	@if not exist "$(subst /,\,$(PACKAGE_INC_DIR))" mkdir "$(subst /,\,$(PACKAGE_INC_DIR))"
-	powershell -NoProfile -Command "Get-ChildItem '$(FIRMWARE_DIR)' -Recurse -Filter *.h | Copy-Item -Destination '$(PACKAGE_INC_DIR)' -Force"
+
+	powershell -NoProfile -Command \
+		"Get-ChildItem '$(FIRMWARE_DIR)' -Recurse -File -Filter *.h | \
+		Copy-Item -Destination '$(PACKAGE_INC_DIR)' -Force"
+
+	@echo [HDR ] Header export complete
+	@echo.
 
 
 # ============================================================
@@ -210,29 +343,54 @@ headers:
 
 # make clean
 #
-# Remove only temporary build artifacts.
-# This does NOT delete eduframework/include or libeduframework.a.
+# Remove temporary compilation artifacts only.
+#
+# The generated package remains untouched:
+#
+#   eduframework/include/
+#   eduframework/lib/
+#
 .PHONY: clean
 clean:
-	@echo [CLEAN] $(BUILD_DIR)
+	@echo.
+	@echo [CLEAN] Removing $(BUILD_DIR)
+
 	@if exist "$(BUILD_DIR)" rmdir /S /Q "$(BUILD_DIR)"
 
+	@echo [CLEAN] Done
+	@echo.
 
+
+# ------------------------------------------------------------
 # make distclean
+# ------------------------------------------------------------
 #
-# Remove temporary build artifacts and generated package files.
-# Use this when a completely fresh exported package is needed.
+# Remove:
+#
+#   build/
+#   eduframework/lib/libeduframework.a
+#   eduframework/include/*.h
+#
+# Use this before creating an official release package.
+#
 .PHONY: distclean
 distclean: clean
-	@echo [CLEAN] $(TARGET_LIB)
+	@echo [CLEAN] Removing generated framework package
+
 	@if exist "$(subst /,\,$(TARGET_LIB))" del /Q "$(subst /,\,$(TARGET_LIB))"
-	@echo [CLEAN] $(PACKAGE_INC_DIR)/*.h
+
 	@if exist "$(subst /,\,$(PACKAGE_INC_DIR))\*.h" del /Q "$(subst /,\,$(PACKAGE_INC_DIR))\*.h"
 
+	@echo [CLEAN] Package removed
+	@echo.
 
+
+# ------------------------------------------------------------
 # make rebuild
+# ------------------------------------------------------------
 #
-# Fully clean and rebuild the framework package.
+# Fully regenerate the framework package from firmware/.
+#
 .PHONY: rebuild
 rebuild: distclean package
 
@@ -243,49 +401,159 @@ rebuild: distclean package
 
 # make list
 #
-# Print discovered source files, header files and include folders.
-# Useful for checking whether Makefile discovery works correctly.
+# Display automatically discovered:
+#
+#   - C sources
+#   - Header sources
+#   - Include directories
+#
+# Useful when adding new drivers or device modules.
+#
 .PHONY: list
 list:
 	@echo.
-	@echo ==================== C SOURCES ====================
-	@echo $(C_SOURCES)
-	@echo.
-	@echo ==================== HEADERS ======================
-	@echo $(H_SOURCES)
-	@echo.
-	@echo ==================== INCLUDE DIRS =================
-	@echo $(INC_DIRS)
+	@echo ============================================================
+	@echo C SOURCES
+	@echo ============================================================
+	@powershell -NoProfile -Command "$$items='$(C_SOURCES)'.Split(' '); $$items | ForEach-Object { Write-Host $$_.Trim() }"
 
+	@echo.
+	@echo ============================================================
+	@echo HEADERS
+	@echo ============================================================
+	@powershell -NoProfile -Command "$$items='$(H_SOURCES)'.Split(' '); $$items | ForEach-Object { Write-Host $$_.Trim() }"
+
+	@echo.
+	@echo ============================================================
+	@echo INCLUDE DIRECTORIES
+	@echo ============================================================
+	@powershell -NoProfile -Command "$$items='$(INC_DIRS)'.Split(' '); $$items | ForEach-Object { Write-Host $$_.Trim() }"
+
+	@echo.
+
+
+# ============================================================
+# Library Content Inspection
+# ============================================================
+
+# make archive-list
+#
+# Show every object stored inside libeduframework.a.
+#
+# Useful before publishing a release to verify that device
+# modules are actually included in the library.
+#
+.PHONY: archive-list
+archive-list: lib
+	@echo.
+	@echo ============================================================
+	@echo LIBRARY OBJECTS
+	@echo ============================================================
+	$(AR) t $(TARGET_LIB)
+	@echo.
+
+
+# ============================================================
+# Size Inspection
+# ============================================================
 
 # make size
 #
-# Show size information for object files.
+# Display size information for all generated object files.
+#
 # Note:
-#   This is mostly for inspection. The final .a library itself
-#   is an archive, not a linked executable.
+# libeduframework.a is an archive. Final flash/RAM usage depends
+# on which symbols are referenced by the final application.
+#
 .PHONY: size
 size: lib
 	@echo.
-	@echo [SIZE] Object file size summary
+	@echo ============================================================
+	@echo OBJECT FILE SIZE SUMMARY
+	@echo ============================================================
 	$(SIZE) $(OBJECTS)
+	@echo.
 
 
-# make help
+# ============================================================
+# Verification Target
+# ============================================================
+
+# make verify
 #
-# Print available Makefile targets.
+# Basic release-package verification:
+#
+#   1. Build package.
+#   2. Confirm libeduframework.a exists.
+#   3. Confirm exported include directory exists.
+#
+.PHONY: verify
+verify: package
+	@echo.
+	@echo ============================================================
+	@echo VERIFYING PACKAGE
+	@echo ============================================================
+
+	@if not exist "$(subst /,\,$(TARGET_LIB))" ( \
+		echo [ERROR] Missing $(TARGET_LIB) & \
+		exit /B 1 \
+	)
+
+	@if not exist "$(subst /,\,$(PACKAGE_INC_DIR))" ( \
+		echo [ERROR] Missing $(PACKAGE_INC_DIR) & \
+		exit /B 1 \
+	)
+
+	@echo [PASS] Static library exists
+	@echo [PASS] Public include directory exists
+	@echo [PASS] EduFramework package verification complete
+	@echo.
+
+
+# ============================================================
+# Help
+# ============================================================
+
 .PHONY: help
 help:
 	@echo.
-	@echo EduFramework_v2 Makefile Targets
-	@echo --------------------------------
-	@echo make             Build package ^(same as make package^)
-	@echo make package     Build library and export headers
-	@echo make lib         Build libeduframework.a only
-	@echo make headers     Export headers only
-	@echo make clean       Remove build directory only
-	@echo make distclean   Remove build and generated package files
-	@echo make rebuild     Clean everything and rebuild package
-	@echo make list        Show detected sources and include folders
-	@echo make size        Show object file size summary
-	@echo make help        Show this help message
+	@echo ============================================================
+	@echo EduFramework v2.0.0 Makefile
+	@echo ============================================================
+	@echo.
+	@echo make
+	@echo     Build complete framework package.
+	@echo.
+	@echo make package
+	@echo     Build libeduframework.a and export public headers.
+	@echo.
+	@echo make lib
+	@echo     Build libeduframework.a only.
+	@echo.
+	@echo make headers
+	@echo     Export all firmware headers.
+	@echo.
+	@echo make clean
+	@echo     Remove temporary build directory.
+	@echo.
+	@echo make distclean
+	@echo     Remove build artifacts and generated package.
+	@echo.
+	@echo make rebuild
+	@echo     Completely regenerate the framework package.
+	@echo.
+	@echo make list
+	@echo     Show discovered sources, headers and include paths.
+	@echo.
+	@echo make archive-list
+	@echo     Show object files stored inside libeduframework.a.
+	@echo.
+	@echo make size
+	@echo     Show object-file size information.
+	@echo.
+	@echo make verify
+	@echo     Build and verify generated package.
+	@echo.
+	@echo make help
+	@echo     Show this help message.
+	@echo.
