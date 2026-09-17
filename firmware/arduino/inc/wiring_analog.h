@@ -17,7 +17,7 @@
  * - analogGetResult()
  * - analogReadMilliVolts()
  *
- * The PWM output path uses the FTM driver:
+ * The PWM output path uses the internal Arduino-layer PWM service:
  * - analogWrite()
  *
  * The current MaaZEDU analog input support is intentionally limited to
@@ -152,8 +152,8 @@ int analogReadMilliVolts(uint8_t pin);
  * This function provides Arduino-style PWM output. The input value is
  * scaled from 0..255 to a 0..100 percent PWM duty cycle.
  *
- * The underlying FTM instance and channel are selected from the Arduino
- * pin mapping table.
+ * PWM hardware configuration and FTM resource management are delegated
+ * to the internal wiring_pwm module.
  *
  * @param[in] pin
  * Arduino-style pin identifier.
