@@ -10,7 +10,6 @@
 /* Global display object instance */
 static ST7789_t tftDisplay;
 
-
 /**
  * @brief Runs the Hello World demo on the ST7789 screen.
  */
@@ -20,8 +19,8 @@ void Example_TFT_HelloWorld(void)
     setup();
 
     /* 2. Configure backlight (If BLK pin is connected to GPIO3 instead of 3V3) */
-    pinMode(GPIO3, OUTPUT);      /*[cite: 4] */
-    digitalWrite(GPIO3, HIGH);   /* Turn on backlight[cite: 4] */
+    pinMode(GPIO3, OUTPUT);    /*[cite: 4] */
+    digitalWrite(GPIO3, HIGH); /* Turn on backlight[cite: 4] */
 
     /* 3. Initialize display object (Customize CS, DC, RST pins for your hardware) */
     ST7789_Init(&tftDisplay, GPIO0, GPIO1, GPIO2, 240U, 280U, 0U, 20U);
