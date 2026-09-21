@@ -2,189 +2,521 @@
 #define LCD_TFT_H
 
 /**
- * @file st7789.h
- * @brief Arduino-style ST7789 TFT LCD driver for EduFramework.
+ * @file lcd_tft.h
+ * @brief ST7789 TFT display device library for EduFramework.
  *
  * @details
- * This module provides an Arduino-like C interface for the ST7789 display.
- * It is built entirely on top of the EduFramework high-level APIs
- * (SPI, wiring_digital, and time) and does not interact with hardware
- * registers directly.
+ * This module provides two API levels for ST7789 TFT displays:
  *
- * To support multiple displays or dynamic configurations, the hardware
- * context is stored in the ST7789_t structure, mimicking the object-oriented
- * approach of standard Arduino C++ libraries.
+ * Beginner API:
+ * - Uses the default EduFramework TFT hardware configuration.
+ * - Hides SPI setup, display context, panel resolution, and RAM offsets.
+ * - Provides Arduino-style drawing and text functions.
+ *
+ * Advanced API:
+ * - Exposes the ST7789_t device context.
+ * - Allows custom control pins, resolution, offsets, and multiple displays.
+ *
+ * The module is implemented on top of the EduFramework Arduino-style
+ * SPI, Digital, and Time APIs.
  */
 
-#include "Arduino.h"
 #include <stdint.h>
 #include <stdbool.h>
 
 /* ============================================================
- * Color Definitions (RGB565)
+ * RGB565 Color Definitions
  * ============================================================ */
 
-#define ST7789_COLOR_BLACK       0x0000U
-#define ST7789_COLOR_WHITE       0xFFFFU
-#define ST7789_COLOR_RED         0xF800U
-#define ST7789_COLOR_GREEN       0x07E0U
-#define ST7789_COLOR_BLUE        0x001FU
-#define ST7789_COLOR_YELLOW      0xFFE0U
-#define ST7789_COLOR_CYAN        0x07FFU
-#define ST7789_COLOR_MAGENTA     0xF81FU
+#define ST7789_COLOR_BLACK (0x0000U)
+#define ST7789_COLOR_WHITE (0xFFFFU)
+#define ST7789_COLOR_RED (0xF800U)
+#define ST7789_COLOR_GREEN (0x07E0U)
+#define ST7789_COLOR_BLUE (0x001FU)
+#define ST7789_COLOR_YELLOW (0xFFE0U)
+#define ST7789_COLOR_CYAN (0x07FFU)
+#define ST7789_COLOR_MAGENTA (0xF81FU)
+
+/**
+ * @brief Beginner-friendly generic TFT color names.
+ */
+#define TFT_BLACK ST7789_COLOR_BLACK
+#define TFT_WHITE ST7789_COLOR_WHITE
+#define TFT_RED ST7789_COLOR_RED
+#define TFT_GREEN ST7789_COLOR_GREEN
+#define TFT_BLUE ST7789_COLOR_BLUE
+#define TFT_YELLOW ST7789_COLOR_YELLOW
+#define TFT_CYAN ST7789_COLOR_CYAN
+#define TFT_MAGENTA ST7789_COLOR_MAGENTA
 
 /* ============================================================
- * Configuration Structure (The "Object")
+ * Advanced Device Context
  * ============================================================ */
 
 /**
- * @brief ST7789 device context structure.
+ * @brief ST7789 display device context.
  *
  * @details
- * This structure acts as an object instance for the ST7789 display.
- * It holds the logical pin mapping and resolution configurations,
- * allowing multiple displays to be controlled independently.
+ * The context stores hardware configuration and text rendering state.
+ * Advanced applications may create their own ST7789_t instance to use
+ * custom pins, panel dimensions, or multiple displays.
  */
 typedef struct
 {
-    uint8_t csPin;        /**< Logical Arduino pin for Chip Select. */
-    uint8_t dcPin;        /**< Logical Arduino pin for Data/Command. */
-    uint8_t rstPin;       /**< Logical Arduino pin for Hardware Reset. */
+    uint8_t csPin;  /**< Chip Select logical pin. */
+    uint8_t dcPin;  /**< Data/Command logical pin. */
+    uint8_t rstPin; /**< Hardware Reset logical pin. */
 
-    uint16_t width;       /**< Display physical width in pixels. */
-    uint16_t height;      /**< Display physical height in pixels. */
+    uint16_t width;  /**< Logical display width in pixels. */
+    uint16_t height; /**< Logical display height in pixels. */
 
-    uint16_t xOffset;     /**< X-axis RAM offset. */
-    uint16_t yOffset;     /**< Y-axis RAM offset (usually 20 for 240x280). */
+    uint16_t xOffset; /**< Display RAM X offset. */
+    uint16_t yOffset; /**< Display RAM Y offset. */
+
+    uint16_t cursorX; /**< Current text cursor X position. */
+    uint16_t cursorY; /**< Current text cursor Y position. */
+
+    uint16_t textColor;      /**< Current text foreground color. */
+    uint16_t textBackground; /**< Current text background color. */
+
+    uint8_t textSize; /**< Current text scale factor. */
 } ST7789_t;
 
-/* ========================================================================= */
-/* Minimal 5x7 Font Array (ASCII 32 to 122)                                  */
-/* ========================================================================= */
-static const uint8_t font5x7[91][5] = {
-    {0x00,0x00,0x00,0x00,0x00}, {0x00,0x00,0x5F,0x00,0x00}, {0x00,0x07,0x00,0x07,0x00}, {0x14,0x7F,0x14,0x7F,0x14}, {0x24,0x2A,0x7F,0x2A,0x12}, /*   ! " # $ */
-    {0x23,0x13,0x08,0x64,0x62}, {0x36,0x49,0x55,0x22,0x50}, {0x00,0x05,0x03,0x00,0x00}, {0x00,0x1C,0x22,0x41,0x00}, {0x00,0x41,0x22,0x1C,0x00}, /* % & ' ( ) */
-    {0x14,0x08,0x3E,0x08,0x14}, {0x08,0x08,0x3E,0x08,0x08}, {0x00,0x50,0x30,0x00,0x00}, {0x08,0x08,0x08,0x08,0x08}, {0x00,0x60,0x60,0x00,0x00}, /* * + , - . */
-    {0x20,0x10,0x08,0x04,0x02}, {0x3E,0x51,0x49,0x45,0x3E}, {0x00,0x42,0x7F,0x40,0x00}, {0x42,0x61,0x51,0x49,0x46}, {0x21,0x41,0x45,0x4B,0x31}, /* / 0 1 2 3 */
-    {0x18,0x14,0x12,0x7F,0x10}, {0x27,0x45,0x45,0x45,0x39}, {0x3C,0x4A,0x49,0x49,0x30}, {0x01,0x71,0x09,0x05,0x03}, {0x36,0x49,0x49,0x49,0x36}, /* 4 5 6 7 8 */
-    {0x06,0x49,0x49,0x29,0x1E}, {0x00,0x36,0x36,0x00,0x00}, {0x00,0x56,0x36,0x00,0x00}, {0x08,0x14,0x22,0x41,0x00}, {0x14,0x14,0x14,0x14,0x14}, /* 9 : ; < = */
-    {0x00,0x41,0x22,0x14,0x08}, {0x02,0x01,0x51,0x09,0x06}, {0x3E,0x41,0x5D,0x55,0x1E}, {0x7E,0x11,0x11,0x11,0x7E}, {0x7F,0x49,0x49,0x49,0x36}, /* > ? @ A B */
-    {0x3E,0x41,0x41,0x41,0x22}, {0x7F,0x41,0x41,0x22,0x1C}, {0x7F,0x49,0x49,0x49,0x41}, {0x7F,0x09,0x09,0x09,0x01}, {0x3E,0x41,0x49,0x49,0x7A}, /* C D E F G */
-    {0x7F,0x08,0x08,0x08,0x7F}, {0x00,0x41,0x7F,0x41,0x00}, {0x20,0x40,0x41,0x3F,0x01}, {0x7F,0x08,0x14,0x22,0x41}, {0x7F,0x40,0x40,0x40,0x40}, /* H I J K L */
-    {0x7F,0x02,0x0C,0x02,0x7F}, {0x7F,0x04,0x08,0x10,0x7F}, {0x3E,0x41,0x41,0x41,0x3E}, {0x7F,0x09,0x09,0x09,0x06}, {0x3E,0x41,0x51,0x21,0x5E}, /* M N O P Q */
-    {0x7F,0x09,0x19,0x29,0x46}, {0x46,0x49,0x49,0x49,0x31}, {0x01,0x01,0x7F,0x01,0x01}, {0x3F,0x40,0x40,0x40,0x3F}, {0x1F,0x20,0x40,0x20,0x1F}, /* R S T U V */
-    {0x3F,0x40,0x38,0x40,0x3F}, {0x63,0x14,0x08,0x14,0x63}, {0x07,0x08,0x70,0x08,0x07}, {0x61,0x51,0x49,0x45,0x43}, {0x00,0x7F,0x41,0x41,0x00}, /* W X Y Z [ */
-    {0x02,0x04,0x08,0x10,0x20}, {0x00,0x41,0x41,0x7F,0x00}, {0x04,0x02,0x01,0x02,0x04}, {0x40,0x40,0x40,0x40,0x40}, {0x00,0x01,0x02,0x04,0x00}, /* \ ] ^ _ ` */
-    {0x20,0x54,0x54,0x54,0x78}, {0x7F,0x48,0x44,0x44,0x38}, {0x38,0x44,0x44,0x44,0x20}, {0x38,0x44,0x44,0x48,0x7F}, {0x38,0x54,0x54,0x54,0x18}, /* a b c d e */
-    {0x08,0x7E,0x09,0x01,0x02}, {0x0C,0x52,0x52,0x52,0x3E}, {0x7F,0x08,0x04,0x04,0x78}, {0x00,0x44,0x7D,0x40,0x00}, {0x20,0x40,0x44,0x3D,0x00}, /* f g h i j */
-    {0x7F,0x10,0x28,0x44,0x00}, {0x00,0x41,0x7F,0x40,0x00}, {0x7C,0x04,0x18,0x04,0x78}, {0x7C,0x08,0x04,0x04,0x78}, {0x38,0x44,0x44,0x44,0x38}, /* k l m n o */
-    {0x7C,0x14,0x14,0x14,0x08}, {0x08,0x14,0x14,0x18,0x7C}, {0x7C,0x08,0x04,0x04,0x08}, {0x48,0x54,0x54,0x54,0x20}, {0x04,0x3F,0x44,0x40,0x20}, /* p q r s t */
-    {0x3C,0x40,0x40,0x20,0x7C}, {0x1C,0x20,0x40,0x20,0x1C}, {0x3C,0x40,0x30,0x40,0x3C}, {0x44,0x28,0x10,0x28,0x44}, {0x0C,0x50,0x50,0x50,0x3C}, /* u v w x y */
-    {0x44,0x64,0x54,0x4C,0x44}                                                                                                                 /* z */
-};
 /* ============================================================
- * Public API Prototypes
+ * Beginner API
  * ============================================================ */
 
 /**
- * @brief Initialize the ST7789 display.
+ * @brief Initialize the default TFT display.
  *
  * @details
- * This function initializes the provided ST7789_t context, configures
- * the designated logical pins as outputs, initializes the SPI bus, and
- * sends the startup command sequence to the display.
+ * The default EduFramework TFT configuration is:
  *
- * @param[in,out] tft
- * Pointer to the ST7789 device context.
+ * - CS: GPIO0
+ * - DC: GPIO1
+ * - RST: GPIO2
+ * - Backlight: GPIO3
+ * - Resolution: 240 x 280 pixels
+ * - X offset: 0
+ * - Y offset: 20
  *
- * @param[in] csPin
- * Logical pin number for Chip Select.
+ * SPI and display initialization are performed automatically.
  *
- * @param[in] dcPin
- * Logical pin number for Data/Command.
+ * @return true when the default display context is initialized.
  *
- * @param[in] rstPin
- * Logical pin number for Hardware Reset.
+ * @note ST7789 displays normally use a write-only SPI interface.
+ * Therefore, successful initialization indicates that the framework
+ * configuration sequence has completed, not that the panel has returned
+ * an acknowledgement.
+ */
+bool TFT_Begin(void);
+
+/**
+ * @brief Check whether the beginner TFT API has been initialized.
  *
- * @param[in] width
- * Display width in pixels (e.g., 240).
- *
- * @param[in] height
- * Display height in pixels (e.g., 280).
- *
- * @param[in] xOffset
- * RAM column offset (usually 0).
- *
- * @param[in] yOffset
- * RAM row offset (usually 20 for 240x280 display).
+ * @return true if TFT_Begin() has completed; otherwise false.
+ */
+bool TFT_IsInitialized(void);
+
+/**
+ * @brief Turn the default TFT backlight on.
  *
  * @return None.
  */
-void ST7789_Init(ST7789_t *tft, uint8_t csPin, uint8_t dcPin, uint8_t rstPin,
-                 uint16_t width, uint16_t height, uint16_t xOffset, uint16_t yOffset);
+void TFT_BacklightOn(void);
 
 /**
- * @brief Set the address window for display RAM writing.
- *
- * @param[in] tft Pointer to the ST7789 device context.
- * @param[in] x0 Start column address.
- * @param[in] y0 Start row address.
- * @param[in] x1 End column address.
- * @param[in] y1 End row address.
+ * @brief Turn the default TFT backlight off.
  *
  * @return None.
  */
-void ST7789_SetAddressWindow(ST7789_t *tft, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
+void TFT_BacklightOff(void);
 
 /**
- * @brief Draw a single pixel on the display.
+ * @brief Fill the entire screen with one color.
  *
- * @param[in] tft Pointer to the ST7789 device context.
- * @param[in] x X-coordinate of the pixel.
- * @param[in] y Y-coordinate of the pixel.
- * @param[in] color 16-bit RGB565 color value.
+ * @param[in] color RGB565 color.
  *
  * @return None.
  */
-void ST7789_DrawPixel(ST7789_t *tft, uint16_t x, uint16_t y, uint16_t color);
+void TFT_FillScreen(uint16_t color);
 
 /**
- * @brief Fill the entire display with a single color.
+ * @brief Draw one pixel.
  *
- * @param[in] tft Pointer to the ST7789 device context.
- * @param[in] color 16-bit RGB565 color value.
- *
- * @return None.
- */
-void ST7789_FillScreen(ST7789_t *tft, uint16_t color);
-
-/**
- * @brief Draw a filled rectangle on the display.
- *
- * @param[in] tft Pointer to the ST7789 device context.
- * @param[in] x X-coordinate of the top-left corner.
- * @param[in] y Y-coordinate of the top-left corner.
- * @param[in] w Width of the rectangle.
- * @param[in] h Height of the rectangle.
- * @param[in] color 16-bit RGB565 color value.
+ * @param[in] x X coordinate.
+ * @param[in] y Y coordinate.
+ * @param[in] color RGB565 color.
  *
  * @return None.
  */
-void ST7789_FillRect(ST7789_t *tft, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
-
-/* ========================================================================= */
-/* Text Rendering Helper Functions                                           */
-/* ========================================================================= */
-
-/**
- * @brief Draw a single ASCII character onto the display.
- */
-static void DrawChar(ST7789_t *tft, uint16_t x, uint16_t y, char c, uint16_t color, uint16_t bg, uint8_t size);
-
+void TFT_DrawPixel(
+    uint16_t x,
+    uint16_t y,
+    uint16_t color);
 
 /**
- * @brief Draw a null-terminated string onto the display.
+ * @brief Draw a line between two points.
+ *
+ * @param[in] x0 Start X coordinate.
+ * @param[in] y0 Start Y coordinate.
+ * @param[in] x1 End X coordinate.
+ * @param[in] y1 End Y coordinate.
+ * @param[in] color RGB565 color.
+ *
+ * @return None.
  */
-static void DrawString(ST7789_t *tft, uint16_t x, uint16_t y, const char *str, uint16_t color, uint16_t bg, uint8_t size);
+void TFT_DrawLine(
+    uint16_t x0,
+    uint16_t y0,
+    uint16_t x1,
+    uint16_t y1,
+    uint16_t color);
 
-#endif /* ST7789_H */
+/**
+ * @brief Draw a rectangle outline.
+ *
+ * @param[in] x Top-left X coordinate.
+ * @param[in] y Top-left Y coordinate.
+ * @param[in] width Rectangle width.
+ * @param[in] height Rectangle height.
+ * @param[in] color RGB565 color.
+ *
+ * @return None.
+ */
+void TFT_DrawRect(
+    uint16_t x,
+    uint16_t y,
+    uint16_t width,
+    uint16_t height,
+    uint16_t color);
+
+/**
+ * @brief Draw a filled rectangle.
+ *
+ * @param[in] x Top-left X coordinate.
+ * @param[in] y Top-left Y coordinate.
+ * @param[in] width Rectangle width.
+ * @param[in] height Rectangle height.
+ * @param[in] color RGB565 color.
+ *
+ * @return None.
+ */
+void TFT_FillRect(
+    uint16_t x,
+    uint16_t y,
+    uint16_t width,
+    uint16_t height,
+    uint16_t color);
+
+/**
+ * @brief Draw a circle outline.
+ *
+ * @param[in] x Center X coordinate.
+ * @param[in] y Center Y coordinate.
+ * @param[in] radius Circle radius.
+ * @param[in] color RGB565 color.
+ *
+ * @return None.
+ */
+void TFT_DrawCircle(
+    uint16_t x,
+    uint16_t y,
+    uint16_t radius,
+    uint16_t color);
+
+/**
+ * @brief Draw a filled circle.
+ *
+ * @param[in] x Center X coordinate.
+ * @param[in] y Center Y coordinate.
+ * @param[in] radius Circle radius.
+ * @param[in] color RGB565 color.
+ *
+ * @return None.
+ */
+void TFT_FillCircle(
+    uint16_t x,
+    uint16_t y,
+    uint16_t radius,
+    uint16_t color);
+
+/* ============================================================
+ * Beginner Text API
+ * ============================================================ */
+
+/**
+ * @brief Set the text cursor position.
+ *
+ * @param[in] x X coordinate.
+ * @param[in] y Y coordinate.
+ *
+ * @return None.
+ */
+void TFT_SetCursor(
+    uint16_t x,
+    uint16_t y);
+
+/**
+ * @brief Set the text foreground color.
+ *
+ * @param[in] color RGB565 color.
+ *
+ * @return None.
+ */
+void TFT_SetTextColor(uint16_t color);
+
+/**
+ * @brief Set the text background color.
+ *
+ * @param[in] color RGB565 color.
+ *
+ * @return None.
+ */
+void TFT_SetTextBackground(uint16_t color);
+
+/**
+ * @brief Set the text scale factor.
+ *
+ * @details
+ * A text size of 1 uses the native 5x7 font.
+ * Values greater than 1 scale each glyph proportionally.
+ *
+ * @param[in] size Text size. Values below 1 are treated as 1.
+ *
+ * @return None.
+ */
+void TFT_SetTextSize(uint8_t size);
+
+/**
+ * @brief Print a string at the current cursor position.
+ *
+ * @param[in] text Null-terminated ASCII string.
+ *
+ * @return None.
+ */
+void TFT_Print(const char *text);
+
+/**
+ * @brief Print a string followed by a new line.
+ *
+ * @param[in] text Null-terminated ASCII string.
+ *
+ * @return None.
+ */
+void TFT_Println(const char *text);
+
+/**
+ * @brief Print a signed integer.
+ *
+ * @param[in] value Integer value.
+ *
+ * @return None.
+ */
+void TFT_PrintInt(int32_t value);
+
+/**
+ * @brief Print a signed integer followed by a new line.
+ *
+ * @param[in] value Integer value.
+ *
+ * @return None.
+ */
+void TFT_PrintlnInt(int32_t value);
+
+/**
+ * @brief Print a floating-point value.
+ *
+ * @param[in] value Floating-point value.
+ * @param[in] decimals Number of digits after the decimal point.
+ *
+ * @return None.
+ */
+void TFT_PrintFloat(
+    float value,
+    uint8_t decimals);
+
+/**
+ * @brief Print a floating-point value followed by a new line.
+ *
+ * @param[in] value Floating-point value.
+ * @param[in] decimals Number of digits after the decimal point.
+ *
+ * @return None.
+ */
+void TFT_PrintlnFloat(
+    float value,
+    uint8_t decimals);
+
+/* ============================================================
+ * Beginner Utility API
+ * ============================================================ */
+
+/**
+ * @brief Convert 8-bit RGB values to RGB565 format.
+ *
+ * @param[in] red Red component from 0 to 255.
+ * @param[in] green Green component from 0 to 255.
+ * @param[in] blue Blue component from 0 to 255.
+ *
+ * @return RGB565 color value.
+ */
+uint16_t TFT_Color565(
+    uint8_t red,
+    uint8_t green,
+    uint8_t blue);
+
+/**
+ * @brief Get the default display width.
+ *
+ * @return Display width in pixels, or 0 if not initialized.
+ */
+uint16_t TFT_Width(void);
+
+/**
+ * @brief Get the default display height.
+ *
+ * @return Display height in pixels, or 0 if not initialized.
+ */
+uint16_t TFT_Height(void);
+
+/* ============================================================
+ * Advanced ST7789 API
+ * ============================================================ */
+
+/**
+ * @brief Initialize an ST7789 display instance.
+ *
+ * @param[in,out] tft Display context.
+ * @param[in] csPin Chip Select logical pin.
+ * @param[in] dcPin Data/Command logical pin.
+ * @param[in] rstPin Reset logical pin.
+ * @param[in] width Logical display width.
+ * @param[in] height Logical display height.
+ * @param[in] xOffset Display RAM X offset.
+ * @param[in] yOffset Display RAM Y offset.
+ *
+ * @return None.
+ */
+void ST7789_Init(
+    ST7789_t *tft,
+    uint8_t csPin,
+    uint8_t dcPin,
+    uint8_t rstPin,
+    uint16_t width,
+    uint16_t height,
+    uint16_t xOffset,
+    uint16_t yOffset);
+
+/**
+ * @brief Set the display RAM address window.
+ *
+ * @param[in] tft Display context.
+ * @param[in] x0 Start X coordinate.
+ * @param[in] y0 Start Y coordinate.
+ * @param[in] x1 End X coordinate.
+ * @param[in] y1 End Y coordinate.
+ *
+ * @return None.
+ */
+void ST7789_SetAddressWindow(
+    ST7789_t *tft,
+    uint16_t x0,
+    uint16_t y0,
+    uint16_t x1,
+    uint16_t y1);
+
+/**
+ * @brief Draw one pixel.
+ */
+void ST7789_DrawPixel(
+    ST7789_t *tft,
+    uint16_t x,
+    uint16_t y,
+    uint16_t color);
+
+/**
+ * @brief Draw a line.
+ */
+void ST7789_DrawLine(
+    ST7789_t *tft,
+    uint16_t x0,
+    uint16_t y0,
+    uint16_t x1,
+    uint16_t y1,
+    uint16_t color);
+
+/**
+ * @brief Draw a rectangle outline.
+ */
+void ST7789_DrawRect(
+    ST7789_t *tft,
+    uint16_t x,
+    uint16_t y,
+    uint16_t width,
+    uint16_t height,
+    uint16_t color);
+
+/**
+ * @brief Draw a filled rectangle.
+ */
+void ST7789_FillRect(
+    ST7789_t *tft,
+    uint16_t x,
+    uint16_t y,
+    uint16_t width,
+    uint16_t height,
+    uint16_t color);
+
+/**
+ * @brief Fill the entire display.
+ */
+void ST7789_FillScreen(
+    ST7789_t *tft,
+    uint16_t color);
+
+/**
+ * @brief Draw a circle outline.
+ */
+void ST7789_DrawCircle(
+    ST7789_t *tft,
+    uint16_t x,
+    uint16_t y,
+    uint16_t radius,
+    uint16_t color);
+
+/**
+ * @brief Draw a filled circle.
+ */
+void ST7789_FillCircle(
+    ST7789_t *tft,
+    uint16_t x,
+    uint16_t y,
+    uint16_t radius,
+    uint16_t color);
+
+/**
+ * @brief Draw one ASCII character.
+ */
+void ST7789_DrawChar(
+    ST7789_t *tft,
+    uint16_t x,
+    uint16_t y,
+    char character,
+    uint16_t color,
+    uint16_t background,
+    uint8_t size);
+
+/**
+ * @brief Draw a null-terminated ASCII string.
+ */
+void ST7789_DrawString(
+    ST7789_t *tft,
+    uint16_t x,
+    uint16_t y,
+    const char *text,
+    uint16_t color,
+    uint16_t background,
+    uint8_t size);
+
+#endif /* LCD_TFT_H */
