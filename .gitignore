@@ -74,3 +74,5 @@ s32ds/EduFramework/.cproject
 s32ds/EduFramework/src/main.c
 
 third_party/
+
+s32ds/EduFramework/src/
