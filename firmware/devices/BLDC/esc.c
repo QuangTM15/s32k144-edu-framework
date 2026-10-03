@@ -1,33 +1,83 @@
 /**
  * @file esc.c
- * @brief Arduino-style ESC driver implementation.
+ * @brief Arduino-style ESC device library implementation.
+ *
+ * @details
+ * This file implements ESC control using the EduFramework FTM driver.
+ *
+ * Design notes:
+ * - One ESC instance is currently supported.
+ * - The application uses logical Arduino-style pins.
+ * - Hardware FTM instance and channel mapping remain private.
+ * - The ESC signal uses 50 Hz RC PWM.
+ * - The default throttle pulse range is 1000 us to 2000 us.
+ * - No dynamic memory allocation is used.
  */
 
 #include "esc.h"
+
 #include "ftm.h"
 #include "port.h"
+#include <stddef.h>
 
 /* ========================================================================= */
 /* Private Configuration Constants                                           */
 /* ========================================================================= */
 
 /**
- * Assume S32K144 Normal RUN Mode with 80 MHz SPLL for FTM.
- *
- * FTM prescaler:
- * 80 MHz / 32 = 2.5 MHz
- *
- * PWM period:
- * 2.5 MHz / 50 Hz = 50,000 counts
- *
- * This fits within the 16-bit FTM counter range.
+ * @brief FTM source clock frequency in Normal RUN mode.
  */
 #define ESC_FTM_SRC_CLOCK_HZ (80000000UL)
-#define ESC_FTM_PRESCALER_VAL (32UL)
-#define ESC_FTM_PRESCALER_ENUM (FTM_PRESCALER_DIV_32)
-#define ESC_PWM_FREQ_HZ (50U)
 
+/**
+ * @brief Numeric FTM prescaler divisor.
+ *
+ * @details
+ * 80 MHz / 32 = 2.5 MHz timer clock.
+ */
+#define ESC_FTM_PRESCALER_VALUE (32UL)
+
+/**
+ * @brief FTM driver prescaler configuration.
+ */
+#define ESC_FTM_PRESCALER (FTM_PRESCALER_DIV_32)
+
+/**
+ * @brief ESC RC PWM frequency.
+ *
+ * @details
+ * 50 Hz corresponds to a 20 ms PWM period.
+ */
+#define ESC_PWM_FREQUENCY_HZ (50U)
+
+/**
+ * @brief EduFramework default ESC arming duration.
+ */
 #define ESC_ARM_TIME_MS (3000U)
+
+/**
+ * @brief Microseconds per second.
+ */
+#define ESC_MICROSECONDS_PER_SECOND (1000000UL)
+
+/**
+ * @brief Minimum throttle percentage.
+ */
+#define ESC_MIN_THROTTLE_PERCENT (0U)
+
+/**
+ * @brief Maximum throttle percentage.
+ */
+#define ESC_MAX_THROTTLE_PERCENT (100U)
+
+/**
+ * @brief Disabled PWM pulse width.
+ *
+ * @details
+ * This value is used internally to produce zero duty during initialization
+ * and shutdown. It is not part of the public ESC pulse range.
+ */
+#define ESC_DISABLED_PULSE_US (0U)
 
 /* ========================================================================= */
 /* Private Types                                                             */
@@ -37,9 +87,8 @@
  * @brief Internal ESC device context.
  *
  * @details
- * Stores all hardware mapping and pulse configuration required by the ESC
- * device library. This structure is private and is not exposed to the
- * application layer.
+ * All hardware-specific information and current command state remain private
+ * to the ESC device library.
  */
 typedef struct
 {
@@ -53,20 +102,294 @@ typedef struct
     uint16_t minPulseUs;
     uint16_t maxPulseUs;
 
+    uint16_t currentPulseUs;
+    uint8_t currentThrottle;
+
     uint32_t timerClockHz;
+
 } ESC_Context_t;
 
 /* ========================================================================= */
-/* Private Variables                                                         */
+/* Private Variables                                                          */
 /* ========================================================================= */
 
 /**
- * @brief Internal ESC context.
- *
- * @details
- * EduFramework currently supports one ESC instance through this device API.
+ * @brief Internal single-instance ESC context.
  */
 static ESC_Context_t g_esc;
+
+/* ========================================================================= */
+/* Private Function Prototypes                                                */
+/* ========================================================================= */
+
+static void ESC_ResetContext(void);
+
+static bool ESC_ConfigureHardware(uint8_t pin);
+
+static uint16_t ESC_ThrottleToMicroseconds(uint8_t percent);
+
+static uint8_t ESC_MicrosecondsToThrottle(uint16_t us);
+
+static uint16_t ESC_ClampPulse(uint16_t us);
+
+static void ESC_WritePulse(uint16_t us);
+
+/* ========================================================================= */
+/* Private Functions                                                          */
+/* ========================================================================= */
+
+/**
+ * @brief Reset the private ESC context.
+ */
+static void ESC_ResetContext(void)
+{
+    g_esc.initialized = false;
+
+    g_esc.logicalPin = 0U;
+
+    g_esc.instance = (FTM_Instance_t)0U;
+    g_esc.channel = (FTM_Channel_t)0U;
+
+    g_esc.minPulseUs =
+        ESC_DEFAULT_MIN_PULSE_US;
+
+    g_esc.maxPulseUs =
+        ESC_DEFAULT_MAX_PULSE_US;
+
+    g_esc.currentPulseUs =
+        ESC_DISABLED_PULSE_US;
+
+    g_esc.currentThrottle =
+        ESC_MIN_THROTTLE_PERCENT;
+
+    g_esc.timerClockHz = 0UL;
+
+    return;
+}
+
+/**
+ * @brief Configure the hardware resources required by the ESC.
+ *
+ * @param pin Arduino-style logical PWM pin.
+ *
+ * @return Configuration state.
+ */
+static bool ESC_ConfigureHardware(uint8_t pin)
+{
+    ArduinoPwmMap_t PwmMap;
+    FTM_PwmConfig_t PwmConfig;
+    const ArduinoPinMap_t *pPinData = NULL;
+    bool bConfigured = false;
+
+    if (ARDUINO_VALID_FALSE !=
+        Arduino_HasPwmCapability(pin))
+    {
+        (void)Arduino_GetPwmMap(
+            pin,
+            &PwmMap);
+
+        g_esc.logicalPin =
+            pin;
+
+        g_esc.instance =
+            PwmMap.instance;
+
+        g_esc.channel =
+            PwmMap.channel;
+
+        g_esc.timerClockHz =
+            ESC_FTM_SRC_CLOCK_HZ /
+            ESC_FTM_PRESCALER_VALUE;
+
+        /*
+         * Enable the logical pin and its PORT clock.
+         */
+        pinMode(
+            pin,
+            OUTPUT);
+
+        /*
+         * Route the selected FTM channel to the physical pin.
+         */
+        pPinData =
+            &g_arduinoPinMap[pin];
+
+        PORT_SetPinMux(
+            pPinData->portBase,
+            pPinData->pinNumber,
+            PwmMap.mux);
+
+        /*
+         * Configure FTM for 50 Hz RC PWM.
+         */
+        PwmConfig.srcClockHz =
+            ESC_FTM_SRC_CLOCK_HZ;
+
+        PwmConfig.pwmFreqHz =
+            ESC_PWM_FREQUENCY_HZ;
+
+        PwmConfig.clockSource =
+            FTM_CLOCK_SOURCE_SYSTEM;
+
+        PwmConfig.prescaler =
+            ESC_FTM_PRESCALER;
+
+        if (FTM_STATUS_OK ==
+            FTM_InitPwm(
+                g_esc.instance,
+                &PwmConfig))
+        {
+            if (FTM_STATUS_OK ==
+                FTM_SetChannelModePwm(
+                    g_esc.instance,
+                    g_esc.channel,
+                    FTM_PWM_EDGE_ALIGNED_HIGH_TRUE))
+            {
+                if (FTM_STATUS_OK ==
+                    FTM_StartCounter(
+                        g_esc.instance))
+                {
+                    bConfigured = true;
+                }
+            }
+        }
+    }
+
+    return bConfigured;
+}
+
+/**
+ * @brief Convert throttle percentage to pulse width.
+ *
+ * @param percent Throttle percentage from 0 to 100.
+ *
+ * @return Pulse width in microseconds.
+ */
+static uint16_t ESC_ThrottleToMicroseconds(uint8_t percent)
+{
+    uint32_t u32PulseRange = 0UL;
+    uint32_t u32PulseUs = 0UL;
+
+    if (ESC_MAX_THROTTLE_PERCENT < percent)
+    {
+        percent =
+            ESC_MAX_THROTTLE_PERCENT;
+    }
+
+    u32PulseRange =
+        (uint32_t)g_esc.maxPulseUs -
+        (uint32_t)g_esc.minPulseUs;
+
+    u32PulseUs =
+        (uint32_t)g_esc.minPulseUs +
+        ((u32PulseRange *
+          (uint32_t)percent) /
+         (uint32_t)ESC_MAX_THROTTLE_PERCENT);
+
+    return (uint16_t)u32PulseUs;
+}
+
+/**
+ * @brief Convert pulse width to an approximate throttle percentage.
+ *
+ * @param us Pulse width in microseconds.
+ *
+ * @return Corresponding throttle percentage.
+ */
+static uint8_t ESC_MicrosecondsToThrottle(uint16_t us)
+{
+    uint32_t u32PulseRange = 0UL;
+    uint32_t u32PulseOffset = 0UL;
+    uint32_t u32Throttle = 0UL;
+
+    if (g_esc.minPulseUs >= us)
+    {
+        u32Throttle =
+            ESC_MIN_THROTTLE_PERCENT;
+    }
+    else if (g_esc.maxPulseUs <= us)
+    {
+        u32Throttle =
+            ESC_MAX_THROTTLE_PERCENT;
+    }
+    else
+    {
+        u32PulseRange =
+            (uint32_t)g_esc.maxPulseUs -
+            (uint32_t)g_esc.minPulseUs;
+
+        u32PulseOffset =
+            (uint32_t)us -
+            (uint32_t)g_esc.minPulseUs;
+
+        u32Throttle =
+            (u32PulseOffset *
+             (uint32_t)ESC_MAX_THROTTLE_PERCENT) /
+            u32PulseRange;
+    }
+
+    return (uint8_t)u32Throttle;
+}
+
+/**
+ * @brief Clamp a pulse width to the configured ESC range.
+ *
+ * @param us Requested pulse width.
+ *
+ * @return Clamped pulse width.
+ */
+static uint16_t ESC_ClampPulse(uint16_t us)
+{
+    uint16_t u16PulseUs = us;
+
+    if (g_esc.minPulseUs > u16PulseUs)
+    {
+        u16PulseUs =
+            g_esc.minPulseUs;
+    }
+    else if (g_esc.maxPulseUs < u16PulseUs)
+    {
+        u16PulseUs =
+            g_esc.maxPulseUs;
+    }
+    else
+    {
+        /* Pulse already lies inside the configured range. */
+    }
+
+    return u16PulseUs;
+}
+
+/**
+ * @brief Write a raw PWM pulse to the configured FTM channel.
+ *
+ * @details
+ * This private function intentionally does not clamp the pulse width.
+ * It is therefore also used to generate zero duty during initialization
+ * and shutdown.
+ *
+ * @param us Pulse width in microseconds.
+ */
+static void ESC_WritePulse(uint16_t us)
+{
+    uint32_t u32Counts = 0UL;
+    uint16_t u16DutyCounts = 0U;
+
+    u32Counts =
+        ((uint32_t)us *
+         g_esc.timerClockHz) /
+        ESC_MICROSECONDS_PER_SECOND;
+
+    u16DutyCounts =
+        (uint16_t)u32Counts;
+
+    (void)FTM_SetPwmDuty(
+        g_esc.instance,
+        g_esc.channel,
+        u16DutyCounts);
+
+    return;
+}
 
 /* ========================================================================= */
 /* Public API Implementation                                                 */
@@ -77,90 +400,109 @@ static ESC_Context_t g_esc;
  */
 bool ESC_Init(uint8_t pin)
 {
-    bool status = false;
+    bool bInitialized = false;
 
-    if (Arduino_HasPwmCapability(pin) != ARDUINO_VALID_FALSE)
+    if (true == ESC_IsInitialized())
     {
-        ArduinoPwmMap_t pwmMap;
-        FTM_PwmConfig_t pwmConfig;
-        const ArduinoPinMap_t *pinData;
-
-        /* Get PWM hardware mapping for the selected logical pin. */
-        (void)Arduino_GetPwmMap(pin, &pwmMap);
-
-        /* Configure internal ESC context. */
-        g_esc.initialized = false;
-
-        g_esc.logicalPin = pin;
-
-        g_esc.instance = pwmMap.instance;
-        g_esc.channel = pwmMap.channel;
-
-        g_esc.minPulseUs = ESC_DEFAULT_MIN_PULSE_US;
-        g_esc.maxPulseUs = ESC_DEFAULT_MAX_PULSE_US;
-
-        g_esc.timerClockHz =
-            ESC_FTM_SRC_CLOCK_HZ / ESC_FTM_PRESCALER_VAL;
-
-        /* Enable the port clock. */
-        pinMode(pin, OUTPUT);
-
-        /* Route the FTM signal to the selected pin. */
-        pinData = &g_arduinoPinMap[pin];
-
-        PORT_SetPinMux(
-            pinData->portBase,
-            pinData->pinNumber,
-            pwmMap.mux);
-
-        /* Configure FTM for 50 Hz RC PWM. */
-        pwmConfig.srcClockHz = ESC_FTM_SRC_CLOCK_HZ;
-        pwmConfig.pwmFreqHz = ESC_PWM_FREQ_HZ;
-        pwmConfig.clockSource = FTM_CLOCK_SOURCE_SYSTEM;
-        pwmConfig.prescaler = ESC_FTM_PRESCALER_ENUM;
-
-        (void)FTM_InitPwm(
-            g_esc.instance,
-            &pwmConfig);
-
-        (void)FTM_SetChannelModePwm(
-            g_esc.instance,
-            g_esc.channel,
-            FTM_PWM_EDGE_ALIGNED_HIGH_TRUE);
-
-        (void)FTM_StartCounter(
-            g_esc.instance);
-
-        g_esc.initialized = true;
-
-        /*
-         * Preserve the startup behavior of the previously verified
-         * ESC implementation.
-         */
-        ESC_SetMicroseconds(0U);
-
-        status = true;
+        ESC_End();
     }
 
-    return status;
+    ESC_ResetContext();
+
+    if (true ==
+        ESC_ConfigureHardware(pin))
+    {
+        /*
+         * Hardware is ready. Keep the PWM output at zero duty until the
+         * application explicitly arms or commands the ESC.
+         */
+        ESC_WritePulse(
+            ESC_DISABLED_PULSE_US);
+
+        g_esc.currentPulseUs =
+            ESC_DISABLED_PULSE_US;
+
+        g_esc.currentThrottle =
+            ESC_MIN_THROTTLE_PERCENT;
+
+        g_esc.initialized =
+            true;
+
+        bInitialized =
+            true;
+    }
+    else
+    {
+        ESC_ResetContext();
+    }
+
+    return bInitialized;
+}
+
+/**
+ * @copydoc ESC_End
+ */
+void ESC_End(void)
+{
+    if (true == g_esc.initialized)
+    {
+        /*
+         * Disable the ESC signal before releasing the software context.
+         *
+         * The FTM instance may be shared with other PWM channels, so this
+         * device layer does not stop or deinitialize the complete FTM module.
+         */
+        ESC_WritePulse(
+            ESC_DISABLED_PULSE_US);
+    }
+
+    ESC_ResetContext();
+
+    return;
+}
+
+/**
+ * @copydoc ESC_IsInitialized
+ */
+bool ESC_IsInitialized(void)
+{
+    bool bInitialized = false;
+
+    if (true == g_esc.initialized)
+    {
+        bInitialized = true;
+    }
+    else
+    {
+        bInitialized = false;
+    }
+
+    return bInitialized;
 }
 
 /**
  * @copydoc ESC_SetPulseRange
  */
-bool ESC_SetPulseRange(uint16_t minUs, uint16_t maxUs)
+bool ESC_SetPulseRange(uint16_t minUs,
+                       uint16_t maxUs)
 {
-    bool status = false;
+    bool bSuccess = false;
 
-    if ((g_esc.initialized) && (minUs < maxUs))
+    if ((true == g_esc.initialized) &&
+        (0U < minUs) &&
+        (minUs < maxUs))
     {
-        g_esc.minPulseUs = minUs;
-        g_esc.maxPulseUs = maxUs;
+        g_esc.minPulseUs =
+            minUs;
 
-        status = true;
+        g_esc.maxPulseUs =
+            maxUs;
+
+        bSuccess =
+            true;
     }
 
-    return status;
+    return bSuccess;
 }
 
 /**
@@ -168,14 +510,19 @@ bool ESC_SetPulseRange(uint16_t minUs, uint16_t maxUs)
  */
 void ESC_Arm(void)
 {
-    if (g_esc.initialized)
+    if (true == g_esc.initialized)
     {
-        /* Send the configured minimum throttle pulse. */
-        ESC_SetMicroseconds(g_esc.minPulseUs);
+        /*
+         * Send minimum throttle during the arming interval.
+         */
+        ESC_SetThrottle(
+            ESC_MIN_THROTTLE_PERCENT);
 
-        /* Hold minimum throttle while the ESC performs its arming process. */
-        delay(ESC_ARM_TIME_MS);
+        delay(
+            ESC_ARM_TIME_MS);
     }
+
+    return;
 }
 
 /**
@@ -183,26 +530,48 @@ void ESC_Arm(void)
  */
 void ESC_SetThrottle(uint8_t percent)
 {
-    if (g_esc.initialized)
-    {
-        uint16_t pulseRange;
-        uint16_t targetUs;
+    uint16_t u16PulseUs = 0U;
 
-        if (percent > 100U)
+    if (true == g_esc.initialized)
+    {
+        if (ESC_MAX_THROTTLE_PERCENT < percent)
         {
-            percent = 100U;
+            percent =
+                ESC_MAX_THROTTLE_PERCENT;
         }
 
-        pulseRange =
-            g_esc.maxPulseUs -
-            g_esc.minPulseUs;
+        u16PulseUs =
+            ESC_ThrottleToMicroseconds(
+                percent);
 
-        targetUs =
-            g_esc.minPulseUs +
-            ((pulseRange * (uint16_t)percent) / 100U);
+        ESC_WritePulse(
+            u16PulseUs);
 
-        ESC_SetMicroseconds(targetUs);
+        g_esc.currentPulseUs =
+            u16PulseUs;
+
+        g_esc.currentThrottle =
+            percent;
     }
+
+    return;
+}
+
+/**
+ * @copydoc ESC_GetThrottle
+ */
+uint8_t ESC_GetThrottle(void)
+{
+    uint8_t u8Throttle =
+        ESC_MIN_THROTTLE_PERCENT;
+
+    if (true == g_esc.initialized)
+    {
+        u8Throttle =
+            g_esc.currentThrottle;
+    }
+
+    return u8Throttle;
 }
 
 /**
@@ -210,26 +579,40 @@ void ESC_SetThrottle(uint8_t percent)
  */
 void ESC_SetMicroseconds(uint16_t us)
 {
-    if (g_esc.initialized)
+    uint16_t u16PulseUs = 0U;
+
+    if (true == g_esc.initialized)
     {
-        uint32_t counts32;
-        uint16_t dutyCounts;
+        u16PulseUs =
+            ESC_ClampPulse(us);
 
-        /*
-         * Convert pulse width in microseconds to FTM compare counts:
-         *
-         * dutyCounts =
-         *     (pulseUs * timerClockHz) / 1,000,000
-         */
-        counts32 =
-            ((uint32_t)us * g_esc.timerClockHz) /
-            1000000UL;
+        ESC_WritePulse(
+            u16PulseUs);
 
-        dutyCounts = (uint16_t)counts32;
+        g_esc.currentPulseUs =
+            u16PulseUs;
 
-        (void)FTM_SetPwmDuty(
-            g_esc.instance,
-            g_esc.channel,
-            dutyCounts);
+        g_esc.currentThrottle =
+            ESC_MicrosecondsToThrottle(
+                u16PulseUs);
     }
+
+    return;
+}
+
+/**
+ * @copydoc ESC_GetMicroseconds
+ */
+uint16_t ESC_GetMicroseconds(void)
+{
+    uint16_t u16PulseUs =
+        ESC_DISABLED_PULSE_US;
+
+    if (true == g_esc.initialized)
+    {
+        u16PulseUs =
+            g_esc.currentPulseUs;
+    }
+
+    return u16PulseUs;
 }
