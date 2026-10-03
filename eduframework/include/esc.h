@@ -3,101 +3,174 @@
 
 /**
  * @file esc.h
- * @brief Arduino-style ESC (Electronic Speed Controller) driver for EduFramework.
+ * @brief Arduino-style ESC device library for EduFramework.
  *
  * @details
- * This library generates a standard 50Hz RC PWM signal required to drive
- * Brushless DC (BLDC) motor ESCs. It accesses the low-level FTM driver
- * to produce precise 1000us to 2000us pulses.
+ * This library provides a simple interface for controlling an Electronic
+ * Speed Controller (ESC) using a 50 Hz RC PWM signal.
+ *
+ * The API is designed for educational and automotive/embedded applications
+ * and hides the underlying FTM timer configuration from the application.
+ *
+ * The default throttle pulse range is:
+ * - 1000 us at 0% throttle.
+ * - 2000 us at 100% throttle.
+ *
+ * The pulse range can be changed with ESC_SetPulseRange().
+ *
+ * EduFramework currently supports one ESC instance through this API.
  */
 
-#include "Arduino.h" //
-#include "ftm.h"     //
-#include <stdint.h>
+#include "Arduino.h"
+
 #include <stdbool.h>
+#include <stdint.h>
 
 /* ========================================================================= */
-/* Configuration Types & Constants                                           */
-/* ========================================================================= */
-
-#define ESC_DEFAULT_MIN_PULSE_US   (1000U)
-#define ESC_DEFAULT_MAX_PULSE_US   (2000U)
-
-/* ========================================================================= */
-/* Object Context Structure                                                  */
+/* Public Constants                                                           */
 /* ========================================================================= */
 
 /**
- * @brief ESC device context structure.
+ * @brief Default pulse width representing 0% throttle.
+ */
+#define ESC_DEFAULT_MIN_PULSE_US (1000U)
+
+/**
+ * @brief Default pulse width representing 100% throttle.
+ */
+#define ESC_DEFAULT_MAX_PULSE_US (2000U)
+
+/* ========================================================================= */
+/* Public API                                                                 */
+/* ========================================================================= */
+
+/**
+ * @brief Initialize the ESC on a PWM-capable logical pin.
  *
  * @details
- * Stores the hardware mapping (FTM instance and channel) and pulse width
- * configuration for an individual ESC.
+ * This function configures the selected logical pin and its associated
+ * FTM channel to generate a 50 Hz RC PWM signal.
+ *
+ * The output is initially disabled until a valid ESC command is issued.
+ *
+ * The default pulse range is 1000 us to 2000 us.
+ *
+ * @param[in] pin Logical PWM-capable pin used for the ESC signal.
+ *
+ * @return Initialization state.
+ *
+ * @retval true ESC initialized successfully.
+ * @retval false The selected pin does not support PWM or initialization failed.
  */
-typedef struct
-{
-    uint8_t logicalPin;         /**< Arduino logical pin number. */
-    FTM_Instance_t instance;    /**< Hardware FTM instance. */
-    FTM_Channel_t channel;      /**< Hardware FTM channel. */
-
-    uint16_t minPulseUs;        /**< Minimum throttle pulse in microseconds. */
-    uint16_t maxPulseUs;        /**< Maximum throttle pulse in microseconds. */
-    uint32_t timerClockHz;      /**< Underlying FTM clock frequency for count calculations. */
-} ESC_t;
-
-/* ========================================================================= */
-/* Arduino-style API Prototypes                                              */
-/* ========================================================================= */
+bool ESC_Init(uint8_t pin);
 
 /**
- * @brief Initialize the ESC driver on a specific pin.
+ * @brief Stop the ESC output and deinitialize the ESC device.
  *
  * @details
- * The selected pin must support PWM output (e.g., GPIO2 - GPIO8)[cite: 4].
- * This function configures the FTM hardware for a 50Hz output.
+ * This function disables the PWM output managed by the ESC library and
+ * resets the internal ESC state.
  *
- * @param[in,out] esc Pointer to the ESC context.
- * @param[in] pin Logical Arduino pin number.
- *
- * @return bool true if successful, false if the pin does not support PWM.
+ * ESC_Init() must be called again before the ESC can be controlled.
  */
-bool ESC_Init(ESC_t *esc, uint8_t pin);
+void ESC_End(void);
 
 /**
- * @brief Set custom minimum and maximum pulse widths.
+ * @brief Check whether the ESC device is initialized.
  *
- * @param[in,out] esc Pointer to the ESC context.
- * @param[in] minUs Minimum pulse in microseconds (throttle 0%).
- * @param[in] maxUs Maximum pulse in microseconds (throttle 100%).
+ * @return Initialization state.
+ *
+ * @retval true ESC is initialized.
+ * @retval false ESC is not initialized.
  */
-void ESC_SetPulseRange(ESC_t *esc, uint16_t minUs, uint16_t maxUs);
+bool ESC_IsInitialized(void);
 
 /**
- * @brief Arm the ESC to unlock motor spinning.
+ * @brief Configure the ESC throttle pulse range.
  *
  * @details
- * Most ESCs require a 0% throttle signal (1000us) for 2 to 3 seconds
- * immediately after power-up. This function blocks for 3 seconds while
- * sending the minimum pulse.
+ * The minimum pulse represents 0% throttle and the maximum pulse represents
+ * 100% throttle.
  *
- * @param[in,out] esc Pointer to the ESC context.
+ * Changing the pulse range does not immediately change the current output.
+ * The new range is used by subsequent ESC_SetThrottle() and
+ * ESC_SetMicroseconds() calls.
+ *
+ * @param[in] minUs Minimum throttle pulse width in microseconds.
+ * @param[in] maxUs Maximum throttle pulse width in microseconds.
+ *
+ * @return Configuration state.
+ *
+ * @retval true Pulse range updated successfully.
+ * @retval false ESC is not initialized or the supplied range is invalid.
  */
-void ESC_Arm(ESC_t *esc);
+bool ESC_SetPulseRange(uint16_t minUs, uint16_t maxUs);
 
 /**
- * @brief Set the throttle percentage.
+ * @brief Arm the ESC using the configured minimum throttle pulse.
  *
- * @param[in,out] esc Pointer to the ESC context.
- * @param[in] percent Throttle value from 0U to 100U.
+ * @details
+ * This function sends the configured minimum throttle pulse and holds it
+ * for the EduFramework arming period.
+ *
+ * The function is blocking during the arming period.
+ *
+ * The exact arming behavior required by an ESC may vary between devices.
  */
-void ESC_SetThrottle(ESC_t *esc, uint8_t percent);
+void ESC_Arm(void);
 
 /**
- * @brief Send a raw pulse width in microseconds to the ESC.
+ * @brief Set the commanded ESC throttle.
  *
- * @param[in,out] esc Pointer to the ESC context.
- * @param[in] us Pulse width in microseconds.
+ * @details
+ * The throttle percentage is mapped linearly between the configured minimum
+ * and maximum pulse widths.
+ *
+ * A value of 0% produces the configured minimum pulse.
+ * A value of 100% produces the configured maximum pulse.
+ *
+ * Values greater than 100% are limited to 100%.
+ *
+ * @param[in] percent Commanded throttle percentage.
  */
-void ESC_SetMicroseconds(ESC_t *esc, uint16_t us);
+void ESC_SetThrottle(uint8_t percent);
+
+/**
+ * @brief Get the most recently commanded throttle percentage.
+ *
+ * @details
+ * This function returns the last throttle command stored by the library.
+ * It does not measure the actual motor speed.
+ *
+ * @return Last commanded throttle percentage from 0U to 100U.
+ */
+uint8_t ESC_GetThrottle(void);
+
+/**
+ * @brief Set the ESC pulse width directly.
+ *
+ * @details
+ * This advanced API directly controls the commanded RC PWM pulse width.
+ *
+ * Values below the configured minimum pulse are limited to the minimum.
+ * Values above the configured maximum pulse are limited to the maximum.
+ *
+ * Calling this function also updates the stored throttle value according
+ * to the configured pulse range.
+ *
+ * @param[in] us Requested pulse width in microseconds.
+ */
+void ESC_SetMicroseconds(uint16_t us);
+
+/**
+ * @brief Get the most recently commanded ESC pulse width.
+ *
+ * @details
+ * This function returns the pulse width most recently commanded by the
+ * library. It does not measure the physical ESC signal.
+ *
+ * @return Last commanded pulse width in microseconds.
+ */
+uint16_t ESC_GetMicroseconds(void);
 
 #endif /* ESC_H */
