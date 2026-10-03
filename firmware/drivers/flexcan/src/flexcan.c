@@ -3,11 +3,21 @@
  * @brief FlexCAN driver implementation for NXP S32K144.
  *
  * @details
- * This implementation is intentionally built in verified blocks. The current
- * block implements module infrastructure, pin/clock setup, Disable/Freeze
- * transitions, Classical CAN nominal bit timing, operating mode control, and
- * basic diagnostic access. Message Buffer transfer, FIFO, interrupt, CAN FD,
- * and Pretended Networking services are implemented in subsequent blocks.
+ * Final EduFramework FlexCAN driver for the MaaZEDU S32K144 target.
+ *
+ * Implemented scope:
+ * - FlexCAN0 controller initialization and shutdown.
+ * - Classical CAN nominal bit timing.
+ * - Normal, Loop-Back, and Listen-Only modes.
+ * - Standard 11-bit and extended 29-bit identifiers.
+ * - Classical CAN payloads from 0 to 8 bytes.
+ * - Message Buffer transmit, receive, acceptance masking, and abort.
+ * - Polling and Message Buffer interrupt operation.
+ * - Interrupt-driven software receive queue and callback events.
+ * - Basic synchronization, error-counter, and Bus-Off diagnostics.
+ *
+ * Rx FIFO, CAN FD, Pretended Networking, DMA, wake-up handling, and advanced
+ * error interrupts are intentionally outside the current verified scope.
  */
 
 #include "flexcan.h"
@@ -51,13 +61,49 @@ typedef struct
     bool bInitialized;
     bool bEnableSelfReception;
     FLEXCAN_Mode_t u8Mode;
+
+    /*
+     * Message Buffer role tracking.
+     *
+     * These masks allow the shared FlexCAN Message Buffer ISR
+     * to determine whether an interrupt belongs to an RX MB
+     * or a TX MB.
+     */
+    uint32_t u32RxMbMask;
+    uint32_t u32TxMbMask;
+
+    /*
+     * Interrupt-driven RX queue.
+     *
+     * Head is advanced by the ISR when a new frame is received.
+     * Tail is advanced by the application when FLEXCAN_Read()
+     * removes a frame from the queue.
+     */
+    volatile uint16_t u16RxQueueHead;
+    volatile uint16_t u16RxQueueTail;
+
+    /*
+     * Optional application callback.
+     */
+    FLEXCAN_Callback_t pfCallback;
+
 } FLEXCAN_DriverState_t;
 
 /* ========================================================================= */
 /* Private Data                                                              */
 /* ========================================================================= */
 
-static FLEXCAN_DriverState_t s_axFlexcanState[FLEXCAN_DRIVER_INSTANCE_COUNT] = {0};
+static FLEXCAN_DriverState_t
+    s_axFlexcanState[FLEXCAN_DRIVER_INSTANCE_COUNT] = {0};
+
+/*
+ * Static RX queue.
+ *
+ * No dynamic allocation is used.
+ */
+static FLEXCAN_Frame_t
+    s_aaxFlexcanRxQueue[FLEXCAN_DRIVER_INSTANCE_COUNT]
+                       [FLEXCAN_RX_QUEUE_SIZE];
 
 /* ========================================================================= */
 /* Private Functions                                                         */
@@ -512,55 +558,103 @@ FLEXCAN_Status_t FLEXCAN_Init(FLEXCAN_Type *pBase,
     }
     else if (true == pConfig->bEnableFD)
     {
-        /* CAN FD is implemented in a later verified block. */
+        /*
+         * CAN FD is outside the current EduFramework FlexCAN scope.
+         */
         xStatus = FLEXCAN_STATUS_UNSUPPORTED;
     }
     else
     {
         u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
 
-        FLEXCAN_EnableModuleClock(pBase);
-        FLEXCAN_ConfigPins(pBase);
+        /*
+         * Reset software state before configuring the hardware.
+         *
+         * bInitialized remains false until the complete initialization
+         * sequence has succeeded.
+         */
+        s_axFlexcanState[u8InstanceIndex].bInitialized = false;
+        s_axFlexcanState[u8InstanceIndex].bEnableSelfReception = false;
+        s_axFlexcanState[u8InstanceIndex].u8Mode = FLEXCAN_MODE_NORMAL;
 
-        /* Clock source selection is only writable while FlexCAN is disabled. */
-        pBase->MCR |= FLEXCAN_MCR_MDIS_MASK;
+        s_axFlexcanState[u8InstanceIndex].u32RxMbMask = 0U;
+        s_axFlexcanState[u8InstanceIndex].u32TxMbMask = 0U;
 
-        if (FLEXCAN_CLOCK_PERIPHERAL == pConfig->u8ClockSource)
-        {
-            pBase->CTRL1 |= FLEXCAN_CTRL1_CLKSRC_MASK;
-        }
-        else
-        {
-            pBase->CTRL1 &= ~FLEXCAN_CTRL1_CLKSRC_MASK;
-        }
+        s_axFlexcanState[u8InstanceIndex].u16RxQueueHead = 0U;
+        s_axFlexcanState[u8InstanceIndex].u16RxQueueTail = 0U;
 
-        /* Ensure that enabling the module brings it into Freeze mode. */
-        pBase->MCR |= (FLEXCAN_MCR_FRZ_MASK | FLEXCAN_MCR_HALT_MASK);
+        s_axFlexcanState[u8InstanceIndex].pfCallback = NULL;
 
-        xStatus = FLEXCAN_EnableModule(pBase, FLEXCAN_DEFAULT_TIMEOUT);
-
-        if (FLEXCAN_STATUS_OK == xStatus)
-        {
-            xStatus = FLEXCAN_EnterFreezeInternal(pBase, FLEXCAN_DEFAULT_TIMEOUT);
-        }
+        /*
+         * Enable the peripheral clock and configure the MaaZEDU CAN0 pins.
+         */
+        xStatus = FLEXCAN_EnableModuleClock(pBase);
 
         if (FLEXCAN_STATUS_OK == xStatus)
         {
+            FLEXCAN_ConfigPins(pBase);
+
+            /*
+             * Clock source selection is writable only while the FlexCAN
+             * module is disabled.
+             */
+            pBase->MCR |= FLEXCAN_MCR_MDIS_MASK;
+
+            if (FLEXCAN_CLOCK_PERIPHERAL == pConfig->u8ClockSource)
+            {
+                pBase->CTRL1 |= FLEXCAN_CTRL1_CLKSRC_MASK;
+            }
+            else
+            {
+                pBase->CTRL1 &= ~FLEXCAN_CTRL1_CLKSRC_MASK;
+            }
+
+            /*
+             * Ensure that enabling the module brings FlexCAN into
+             * Freeze mode.
+             */
+            pBase->MCR |=
+                (FLEXCAN_MCR_FRZ_MASK |
+                 FLEXCAN_MCR_HALT_MASK);
+
+            xStatus =
+                FLEXCAN_EnableModule(
+                    pBase,
+                    FLEXCAN_DEFAULT_TIMEOUT);
+        }
+
+        if (FLEXCAN_STATUS_OK == xStatus)
+        {
+            xStatus =
+                FLEXCAN_EnterFreezeInternal(
+                    pBase,
+                    FLEXCAN_DEFAULT_TIMEOUT);
+        }
+
+        if (FLEXCAN_STATUS_OK == xStatus)
+        {
+            /*
+             * Configure the Module Configuration Register.
+             */
             u32Mcr = pBase->MCR;
-            u32Mcr &= ~(FLEXCAN_MCR_RFEN_MASK |
-                        FLEXCAN_MCR_DMA_MASK |
-                        FLEXCAN_MCR_PNET_EN_MASK |
-                        FLEXCAN_MCR_LPRIOEN_MASK |
-                        FLEXCAN_MCR_AEN_MASK |
-                        FLEXCAN_MCR_FDEN_MASK |
-                        FLEXCAN_MCR_IRMQ_MASK |
-                        FLEXCAN_MCR_SRXDIS_MASK |
-                        FLEXCAN_MCR_MAXMB_MASK);
 
-            u32Mcr |= FLEXCAN_MCR_FRZ_MASK |
-                      FLEXCAN_MCR_HALT_MASK |
-                      FLEXCAN_MCR_WRNEN_MASK |
-                      FLEXCAN_MCR_MAXMB(pConfig->u8MaxMessageBuffer);
+            u32Mcr &=
+                ~(FLEXCAN_MCR_RFEN_MASK |
+                  FLEXCAN_MCR_DMA_MASK |
+                  FLEXCAN_MCR_PNET_EN_MASK |
+                  FLEXCAN_MCR_LPRIOEN_MASK |
+                  FLEXCAN_MCR_AEN_MASK |
+                  FLEXCAN_MCR_FDEN_MASK |
+                  FLEXCAN_MCR_IRMQ_MASK |
+                  FLEXCAN_MCR_SRXDIS_MASK |
+                  FLEXCAN_MCR_MAXMB_MASK);
+
+            u32Mcr |=
+                FLEXCAN_MCR_FRZ_MASK |
+                FLEXCAN_MCR_HALT_MASK |
+                FLEXCAN_MCR_WRNEN_MASK |
+                FLEXCAN_MCR_MAXMB(
+                    pConfig->u8MaxMessageBuffer);
 
             if (true == pConfig->bEnableIndividualMasking)
             {
@@ -577,90 +671,150 @@ FLEXCAN_Status_t FLEXCAN_Init(FLEXCAN_Type *pBase,
                 u32Mcr |= FLEXCAN_MCR_SRXDIS_MASK;
             }
 
-            if (FLEXCAN_TX_PRIORITY_LOCAL == pConfig->u8TxPriorityMode)
+            if (FLEXCAN_TX_PRIORITY_LOCAL ==
+                pConfig->u8TxPriorityMode)
             {
                 u32Mcr |= FLEXCAN_MCR_LPRIOEN_MASK;
             }
 
             pBase->MCR = u32Mcr;
 
+            /*
+             * Configure CTRL1 features that are independent from
+             * nominal bit timing.
+             */
             u32Ctrl1 = pBase->CTRL1;
-            u32Ctrl1 &= ~(FLEXCAN_CTRL1_LBUF_MASK |
-                          FLEXCAN_CTRL1_BOFFREC_MASK |
-                          FLEXCAN_CTRL1_LPB_MASK |
-                          FLEXCAN_CTRL1_LOM_MASK |
-                          FLEXCAN_CTRL1_ERRMSK_MASK |
-                          FLEXCAN_CTRL1_BOFFMSK_MASK |
-                          FLEXCAN_CTRL1_TWRNMSK_MASK |
-                          FLEXCAN_CTRL1_RWRNMSK_MASK);
 
-            if (FLEXCAN_TX_PRIORITY_LOWEST_MB == pConfig->u8TxPriorityMode)
+            u32Ctrl1 &=
+                ~(FLEXCAN_CTRL1_LBUF_MASK |
+                  FLEXCAN_CTRL1_BOFFREC_MASK |
+                  FLEXCAN_CTRL1_LPB_MASK |
+                  FLEXCAN_CTRL1_LOM_MASK |
+                  FLEXCAN_CTRL1_ERRMSK_MASK |
+                  FLEXCAN_CTRL1_BOFFMSK_MASK |
+                  FLEXCAN_CTRL1_TWRNMSK_MASK |
+                  FLEXCAN_CTRL1_RWRNMSK_MASK);
+
+            if (FLEXCAN_TX_PRIORITY_LOWEST_MB ==
+                pConfig->u8TxPriorityMode)
             {
                 u32Ctrl1 |= FLEXCAN_CTRL1_LBUF_MASK;
             }
 
-            if (false == pConfig->bEnableAutomaticBusOffRecovery)
+            if (false ==
+                pConfig->bEnableAutomaticBusOffRecovery)
             {
                 u32Ctrl1 |= FLEXCAN_CTRL1_BOFFREC_MASK;
             }
 
             pBase->CTRL1 = u32Ctrl1;
 
+            /*
+             * Disable all Message Buffer interrupts during
+             * initialization and clear any stale interrupt flags.
+             */
+            pBase->IMASK1 = 0U;
+            pBase->IFLAG1 = 0xFFFFFFFFUL;
+
+            /*
+             * Initialize all Message Buffer RAM.
+             */
             FLEXCAN_ClearMessageBufferMemory(pBase);
 
-            if (FLEXCAN_TIMING_AUTOMATIC == pConfig->u8NominalTimingMode)
+            /*
+             * Calculate or validate nominal Classical CAN timing.
+             */
+            if (FLEXCAN_TIMING_AUTOMATIC ==
+                pConfig->u8NominalTimingMode)
             {
-                xStatus = FLEXCAN_CalculateNominalBitTiming(
-                    pConfig->u32ClockFrequencyHz,
-                    pConfig->u32NominalBitRate,
-                    &xTiming);
+                xStatus =
+                    FLEXCAN_CalculateNominalBitTiming(
+                        pConfig->u32ClockFrequencyHz,
+                        pConfig->u32NominalBitRate,
+                        &xTiming);
             }
-            else if (FLEXCAN_TIMING_MANUAL == pConfig->u8NominalTimingMode)
+            else if (FLEXCAN_TIMING_MANUAL ==
+                     pConfig->u8NominalTimingMode)
             {
                 xTiming = pConfig->xNominalTiming;
 
-                if (false == FLEXCAN_IsValidNominalTiming(&xTiming))
+                if (false ==
+                    FLEXCAN_IsValidNominalTiming(&xTiming))
                 {
-                    xStatus = FLEXCAN_STATUS_INVALID_ARGUMENT;
+                    xStatus =
+                        FLEXCAN_STATUS_INVALID_ARGUMENT;
                 }
             }
             else
             {
-                xStatus = FLEXCAN_STATUS_INVALID_ARGUMENT;
+                xStatus =
+                    FLEXCAN_STATUS_INVALID_ARGUMENT;
             }
         }
 
         if (FLEXCAN_STATUS_OK == xStatus)
         {
-            xStatus = FLEXCAN_ApplyNominalTiming(pBase, &xTiming);
+            xStatus =
+                FLEXCAN_ApplyNominalTiming(
+                    pBase,
+                    &xTiming);
         }
 
         if (FLEXCAN_STATUS_OK == xStatus)
         {
-            xStatus = FLEXCAN_ApplyMode(pBase,
-                                        pConfig->u8Mode,
-                                        pConfig->bEnableSelfReception);
+            xStatus =
+                FLEXCAN_ApplyMode(
+                    pBase,
+                    pConfig->u8Mode,
+                    pConfig->bEnableSelfReception);
         }
 
         if (FLEXCAN_STATUS_OK == xStatus)
         {
+            /*
+             * Store configuration that is required by the software
+             * driver before leaving Freeze mode.
+             */
             s_axFlexcanState[u8InstanceIndex].bEnableSelfReception =
                 pConfig->bEnableSelfReception;
-            s_axFlexcanState[u8InstanceIndex].u8Mode = pConfig->u8Mode;
 
-            xStatus = FLEXCAN_ExitFreezeInternal(pBase, FLEXCAN_DEFAULT_TIMEOUT);
+            s_axFlexcanState[u8InstanceIndex].u8Mode =
+                pConfig->u8Mode;
+
+            xStatus =
+                FLEXCAN_ExitFreezeInternal(
+                    pBase,
+                    FLEXCAN_DEFAULT_TIMEOUT);
         }
 
         if (FLEXCAN_STATUS_OK == xStatus)
         {
+            /*
+             * Hardware initialization is now complete.
+             *
+             * MB role masks, RX queue and callback were already reset
+             * at the beginning of the initialization sequence.
+             */
             s_axFlexcanState[u8InstanceIndex].bInitialized = true;
         }
         else
         {
+            /*
+             * Do not expose a partially initialized driver.
+             */
             s_axFlexcanState[u8InstanceIndex].bInitialized = false;
+            s_axFlexcanState[u8InstanceIndex].bEnableSelfReception = false;
+            s_axFlexcanState[u8InstanceIndex].u8Mode =
+                FLEXCAN_MODE_NORMAL;
+
+            s_axFlexcanState[u8InstanceIndex].u32RxMbMask = 0U;
+            s_axFlexcanState[u8InstanceIndex].u32TxMbMask = 0U;
+
+            s_axFlexcanState[u8InstanceIndex].u16RxQueueHead = 0U;
+            s_axFlexcanState[u8InstanceIndex].u16RxQueueTail = 0U;
+            s_axFlexcanState[u8InstanceIndex].pfCallback = NULL;
         }
     }
-
     return xStatus;
 }
 
@@ -668,48 +822,93 @@ FLEXCAN_Status_t FLEXCAN_Deinit(FLEXCAN_Type *pBase)
 {
     FLEXCAN_Status_t xStatus = FLEXCAN_STATUS_OK;
     uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
-
-    if ((NULL == pBase) || (false == FLEXCAN_IsSupportedBoardInstance(pBase)))
+    if ((NULL == pBase) ||
+        (false == FLEXCAN_IsSupportedBoardInstance(pBase)))
     {
         xStatus = FLEXCAN_STATUS_INVALID_ARGUMENT;
     }
     else
     {
-        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
-
-        if (false == s_axFlexcanState[u8InstanceIndex].bInitialized)
+        u8InstanceIndex =
+            FLEXCAN_GetInstanceIndex(pBase);
+        if (false ==
+            s_axFlexcanState[u8InstanceIndex].bInitialized)
         {
-            xStatus = FLEXCAN_STATUS_NOT_INITIALIZED;
+            xStatus =
+                FLEXCAN_STATUS_NOT_INITIALIZED;
         }
         else
         {
-            if (0U != (pBase->MCR & FLEXCAN_MCR_MDIS_MASK))
+            /*
+             * Stop all Message Buffer interrupt generation before
+             * shutting down the controller.
+             */
+            pBase->IMASK1 = 0U;
+            /*
+             * Clear all pending Message Buffer flags.
+             *
+             * IFLAG1 is W1C, therefore writing ones directly is used
+             * instead of a read-modify-write operation.
+             */
+            pBase->IFLAG1 = 0xFFFFFFFFUL;
+            /*
+             * The module may already have been disabled explicitly.
+             * Temporarily enable it so Freeze mode can be entered
+             * safely before final shutdown.
+             */
+            if (0U !=
+                (pBase->MCR & FLEXCAN_MCR_MDIS_MASK))
             {
-                xStatus = FLEXCAN_EnableModule(pBase, FLEXCAN_DEFAULT_TIMEOUT);
+                xStatus =
+                    FLEXCAN_EnableModule(
+                        pBase,
+                        FLEXCAN_DEFAULT_TIMEOUT);
             }
-
             if (FLEXCAN_STATUS_OK == xStatus)
             {
-                xStatus = FLEXCAN_EnterFreezeInternal(pBase, FLEXCAN_DEFAULT_TIMEOUT);
+                xStatus =
+                    FLEXCAN_EnterFreezeInternal(
+                        pBase,
+                        FLEXCAN_DEFAULT_TIMEOUT);
             }
-
             if (FLEXCAN_STATUS_OK == xStatus)
             {
+                /*
+                 * Keep interrupts disabled and remove any flag that
+                 * may have appeared while entering Freeze mode.
+                 */
                 pBase->IMASK1 = 0U;
                 pBase->IFLAG1 = 0xFFFFFFFFUL;
-                xStatus = FLEXCAN_DisableModule(pBase, FLEXCAN_DEFAULT_TIMEOUT);
+                xStatus =
+                    FLEXCAN_DisableModule(
+                        pBase,
+                        FLEXCAN_DEFAULT_TIMEOUT);
             }
-
             if (FLEXCAN_STATUS_OK == xStatus)
             {
                 FLEXCAN_DisableModuleClock(pBase);
-                s_axFlexcanState[u8InstanceIndex].bInitialized = false;
-                s_axFlexcanState[u8InstanceIndex].bEnableSelfReception = false;
-                s_axFlexcanState[u8InstanceIndex].u8Mode = FLEXCAN_MODE_NORMAL;
+                /*
+                 * Reset the complete software state.
+                 */
+                s_axFlexcanState[u8InstanceIndex].bInitialized =
+                    false;
+                s_axFlexcanState[u8InstanceIndex].bEnableSelfReception =
+                    false;
+                s_axFlexcanState[u8InstanceIndex].u8Mode =
+                    FLEXCAN_MODE_NORMAL;
+                s_axFlexcanState[u8InstanceIndex].u32RxMbMask =
+                    0U;
+                s_axFlexcanState[u8InstanceIndex].u32TxMbMask =
+                    0U;
+                s_axFlexcanState[u8InstanceIndex].u16RxQueueHead =
+                    0U;
+                s_axFlexcanState[u8InstanceIndex].u16RxQueueTail =
+                    0U;
+                s_axFlexcanState[u8InstanceIndex].pfCallback =
+                    NULL;
             }
         }
     }
-
     return xStatus;
 }
 
@@ -1466,6 +1665,14 @@ FLEXCAN_Status_t FLEXCAN_ConfigTxMb(FLEXCAN_Type *pBase,
                     pBase->IMASK1 &= ~u32FlagMask;
                 }
 
+                /*
+                 * Track the Message Buffer role independently from the
+                 * interrupt enable state. The shared MB ISR uses these masks
+                 * to distinguish Tx-complete and Rx-frame events.
+                 */
+                s_axFlexcanState[u8InstanceIndex].u32TxMbMask |= u32FlagMask;
+                s_axFlexcanState[u8InstanceIndex].u32RxMbMask &= ~u32FlagMask;
+
                 xStatus = FLEXCAN_ExitFreezeInternal(pBase,
                                                      FLEXCAN_DEFAULT_TIMEOUT);
             }
@@ -1569,6 +1776,10 @@ FLEXCAN_Status_t FLEXCAN_ConfigRxMb(FLEXCAN_Type *pBase,
                     pBase->IMASK1 &= ~u32FlagMask;
                 }
 
+                /* Track this Message Buffer as an Rx MB. */
+                s_axFlexcanState[u8InstanceIndex].u32RxMbMask |= u32FlagMask;
+                s_axFlexcanState[u8InstanceIndex].u32TxMbMask &= ~u32FlagMask;
+
                 xStatus = FLEXCAN_ExitFreezeInternal(pBase,
                                                      FLEXCAN_DEFAULT_TIMEOUT);
             }
@@ -1621,6 +1832,10 @@ FLEXCAN_Status_t FLEXCAN_DisableMb(FLEXCAN_Type *pBase,
 
                 pBase->IMASK1 &= ~u32FlagMask;
                 pBase->IFLAG1 = u32FlagMask;
+
+                /* Remove the disabled MB from software role tracking. */
+                s_axFlexcanState[u8InstanceIndex].u32RxMbMask &= ~u32FlagMask;
+                s_axFlexcanState[u8InstanceIndex].u32TxMbMask &= ~u32FlagMask;
 
                 xStatus = FLEXCAN_ExitFreezeInternal(pBase,
                                                      FLEXCAN_DEFAULT_TIMEOUT);
@@ -1853,37 +2068,67 @@ FLEXCAN_Status_t FLEXCAN_TransmitBlocking(FLEXCAN_Type *pBase,
                                           uint32_t u32Timeout)
 {
     FLEXCAN_Status_t xStatus = FLEXCAN_STATUS_OK;
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
     uint32_t u32FlagMask = 0U;
+    bool bInterruptEnabled = false;
 
-    if (0U == u32Timeout)
+    if ((NULL == pBase) || (NULL == pFrame) ||
+        (0U == u32Timeout) ||
+        (false == FLEXCAN_IsSupportedBoardInstance(pBase)))
     {
         xStatus = FLEXCAN_STATUS_INVALID_ARGUMENT;
     }
     else
     {
-        xStatus = FLEXCAN_Transmit(pBase, u8MbIndex, pFrame);
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
 
-        if (FLEXCAN_STATUS_OK == xStatus)
+        if (false == s_axFlexcanState[u8InstanceIndex].bInitialized)
+        {
+            xStatus = FLEXCAN_STATUS_NOT_INITIALIZED;
+        }
+        else if (false == FLEXCAN_IsMbIndexValid(pBase, u8MbIndex))
+        {
+            xStatus = FLEXCAN_STATUS_INVALID_ARGUMENT;
+        }
+        else
         {
             u32FlagMask = FLEXCAN_GetMbFlagMask(u8MbIndex);
 
-            while ((0U == (pBase->IFLAG1 & u32FlagMask)) &&
-                   (0U < u32Timeout))
+            /*
+             * A Tx-complete ISR clears IFLAG1. Temporarily mask this MB so a
+             * blocking transfer can observe and acknowledge its own completion
+             * flag without racing the interrupt handler.
+             */
+            if (0U != (pBase->IMASK1 & u32FlagMask))
             {
-                u32Timeout--;
+                bInterruptEnabled = true;
+                pBase->IMASK1 &= ~u32FlagMask;
             }
 
-            if (0U == (pBase->IFLAG1 & u32FlagMask))
+            xStatus = FLEXCAN_Transmit(pBase, u8MbIndex, pFrame);
+
+            if (FLEXCAN_STATUS_OK == xStatus)
             {
-                xStatus = FLEXCAN_STATUS_TIMEOUT;
+                while ((0U == (pBase->IFLAG1 & u32FlagMask)) &&
+                       (0U < u32Timeout))
+                {
+                    u32Timeout--;
+                }
+
+                if (0U == (pBase->IFLAG1 & u32FlagMask))
+                {
+                    xStatus = FLEXCAN_STATUS_TIMEOUT;
+                }
+                else
+                {
+                    /* IFLAG1 is W1C. Acknowledge only this Tx MB. */
+                    pBase->IFLAG1 = u32FlagMask;
+                }
             }
-            else
+
+            if (true == bInterruptEnabled)
             {
-                /*
-                 * AEN blocks a completed Tx MB until its IFLAG is cleared.
-                 * Clear only this MB flag after the blocking transfer.
-                 */
-                pBase->IFLAG1 = u32FlagMask;
+                pBase->IMASK1 |= u32FlagMask;
             }
         }
     }
@@ -2176,4 +2421,540 @@ FLEXCAN_Status_t FLEXCAN_Receive(FLEXCAN_Type *pBase,
     }
 
     return xStatus;
+}
+
+/* ========================================================================= */
+/* FlexCAN Message Buffer Interrupt Support                                  */
+/* ========================================================================= */
+
+/*
+ * IMPORTANT:
+ * This section is the final Classical-CAN interrupt block for the reduced
+ * EduFramework FlexCAN scope. It provides:
+ * - MB interrupt enable/disable.
+ * - Interrupt-driven Rx queue.
+ * - Tx-complete callback event.
+ * - Rx callback event.
+ * - Queue-overflow callback event.
+ *
+ * NVIC/vector routing remains in irq.c. The application or the future
+ * Arduino-style CAN layer must call IRQ_FLEXCAN0_MB_Init() once before using
+ * Message Buffer interrupts.
+ */
+
+#define FLEXCAN_ISR_RX_BUSY_RETRY_COUNT (32U)
+
+static uint8_t FLEXCAN_GetRxQueueCountInternal(uint8_t u8InstanceIndex)
+{
+    uint16_t u16Head = 0U;
+    uint16_t u16Tail = 0U;
+    uint16_t u16Count = 0U;
+
+    u16Head = s_axFlexcanState[u8InstanceIndex].u16RxQueueHead;
+    u16Tail = s_axFlexcanState[u8InstanceIndex].u16RxQueueTail;
+    u16Count = (uint16_t)(u16Head - u16Tail);
+
+    if (FLEXCAN_RX_QUEUE_SIZE < u16Count)
+    {
+        u16Count = FLEXCAN_RX_QUEUE_SIZE;
+    }
+
+    return (uint8_t)u16Count;
+}
+
+static bool FLEXCAN_PushRxQueue(uint8_t u8InstanceIndex,
+                                const FLEXCAN_Frame_t *pFrame)
+{
+    bool bStored = false;
+    uint16_t u16Head = 0U;
+    uint16_t u16Tail = 0U;
+    uint16_t u16Count = 0U;
+    uint8_t u8QueueIndex = 0U;
+
+    if (NULL != pFrame)
+    {
+        u16Head = s_axFlexcanState[u8InstanceIndex].u16RxQueueHead;
+        u16Tail = s_axFlexcanState[u8InstanceIndex].u16RxQueueTail;
+        u16Count = (uint16_t)(u16Head - u16Tail);
+
+        if (FLEXCAN_RX_QUEUE_SIZE > u16Count)
+        {
+            u8QueueIndex = (uint8_t)(u16Head % FLEXCAN_RX_QUEUE_SIZE);
+            s_aaxFlexcanRxQueue[u8InstanceIndex][u8QueueIndex] = *pFrame;
+
+            /* Publish the new frame only after the frame copy is complete. */
+            s_axFlexcanState[u8InstanceIndex].u16RxQueueHead =
+                (uint16_t)(u16Head + 1U);
+
+            bStored = true;
+        }
+    }
+
+    return bStored;
+}
+
+static FLEXCAN_Status_t FLEXCAN_ReadRxMbInternal(FLEXCAN_Type *pBase,
+                                                 uint8_t u8MbIndex,
+                                                 FLEXCAN_Frame_t *pFrame,
+                                                 uint32_t u32BusyRetryCount)
+{
+    FLEXCAN_Status_t xStatus = FLEXCAN_STATUS_OK;
+    uint8_t u8Code = 0U;
+    uint8_t u8Dlc = 0U;
+    uint8_t u8Index = 0U;
+    uint32_t u32WordIndex = 0U;
+    uint32_t u32FlagMask = 0U;
+    uint32_t u32Cs = 0U;
+    uint32_t u32IdWord = 0U;
+    uint32_t u32Data0 = 0U;
+    uint32_t u32Data1 = 0U;
+    uint16_t u16UnlockRead = 0U;
+
+    u32FlagMask = FLEXCAN_GetMbFlagMask(u8MbIndex);
+
+    if (0U == (pBase->IFLAG1 & u32FlagMask))
+    {
+        xStatus = FLEXCAN_STATUS_NO_DATA;
+    }
+    else
+    {
+        u32WordIndex = FLEXCAN_GetMbWordIndex(u8MbIndex);
+
+        /*
+         * Reading C/S locks a FULL/OVERRUN Rx MB. Retry only for a short,
+         * bounded period while CODE[0] reports BUSY. The ISR uses a much
+         * smaller retry count than the polling API so interrupt latency stays
+         * bounded.
+         */
+        do
+        {
+            u32Cs = pBase->RAMn[u32WordIndex + FLEXCAN_MB_CS_WORD_OFFSET];
+            u8Code = FLEXCAN_GetMbCode(u32Cs);
+
+            if (0U < u32BusyRetryCount)
+            {
+                u32BusyRetryCount--;
+            }
+        } while ((0U != (u8Code & 0x1U)) && (0U < u32BusyRetryCount));
+
+        if (0U != (u8Code & 0x1U))
+        {
+            xStatus = FLEXCAN_STATUS_BUSY;
+        }
+        else if ((FLEXCAN_MB_CODE_RX_FULL != u8Code) &&
+                 (FLEXCAN_MB_CODE_RX_OVERRUN != u8Code))
+        {
+            xStatus = FLEXCAN_STATUS_ERROR;
+        }
+        else
+        {
+            u32IdWord =
+                pBase->RAMn[u32WordIndex + FLEXCAN_MB_ID_WORD_OFFSET];
+            u32Data0 =
+                pBase->RAMn[u32WordIndex + FLEXCAN_MB_DATA0_WORD_OFFSET];
+            u32Data1 =
+                pBase->RAMn[u32WordIndex + FLEXCAN_MB_DATA1_WORD_OFFSET];
+
+            pFrame->u8MbIndex = u8MbIndex;
+            pFrame->u16Timestamp =
+                (uint16_t)(u32Cs & FLEXCAN_MB_CS_TIMESTAMP_MASK);
+            pFrame->bFD = false;
+            pFrame->bBitRateSwitch = false;
+            pFrame->bErrorStateIndicator = false;
+            pFrame->bOverrun =
+                (FLEXCAN_MB_CODE_RX_OVERRUN == u8Code);
+            pFrame->u8LocalPriority = 0U;
+
+            if (0U != (u32Cs & FLEXCAN_MB_CS_IDE_MASK))
+            {
+                pFrame->u8Format = FLEXCAN_FRAME_EXTENDED;
+                pFrame->u32Id =
+                    u32IdWord & FLEXCAN_MB_EXTENDED_ID_MASK;
+            }
+            else
+            {
+                pFrame->u8Format = FLEXCAN_FRAME_STANDARD;
+                pFrame->u32Id =
+                    (u32IdWord & FLEXCAN_MB_STANDARD_ID_MASK) >>
+                    FLEXCAN_MB_STANDARD_ID_SHIFT;
+            }
+
+            if (0U != (u32Cs & FLEXCAN_MB_CS_RTR_MASK))
+            {
+                pFrame->u8FrameType = FLEXCAN_FRAME_REMOTE;
+            }
+            else
+            {
+                pFrame->u8FrameType = FLEXCAN_FRAME_DATA;
+            }
+
+            u8Dlc = (uint8_t)((u32Cs & FLEXCAN_MB_CS_DLC_MASK) >>
+                              FLEXCAN_MB_CS_DLC_SHIFT);
+
+            if (FLEXCAN_CLASSIC_MAX_DATA_LENGTH < u8Dlc)
+            {
+                pFrame->u8Length = FLEXCAN_CLASSIC_MAX_DATA_LENGTH;
+            }
+            else
+            {
+                pFrame->u8Length = u8Dlc;
+            }
+
+            FLEXCAN_UnpackDataWord(u32Data0, &pFrame->au8Data[0U]);
+            FLEXCAN_UnpackDataWord(u32Data1, &pFrame->au8Data[4U]);
+
+            for (u8Index = pFrame->u8Length;
+                 u8Index < FLEXCAN_FD_MAX_DATA_LENGTH;
+                 u8Index++)
+            {
+                pFrame->au8Data[u8Index] = 0U;
+            }
+
+            /* Clear only this Message Buffer flag (IFLAG1 is W1C). */
+            pBase->IFLAG1 = u32FlagMask;
+
+            /* TIMER read unlocks the Rx Message Buffer. */
+            u16UnlockRead =
+                (uint16_t)(pBase->TIMER & FLEXCAN_TIMER_TIMER_MASK);
+            (void)u16UnlockRead;
+        }
+    }
+
+    return xStatus;
+}
+
+bool FLEXCAN_IsDataAvailable(FLEXCAN_Type *pBase)
+{
+    bool bAvailable = false;
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
+
+    if ((NULL != pBase) &&
+        (true == FLEXCAN_IsSupportedBoardInstance(pBase)))
+    {
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
+
+        if ((true == s_axFlexcanState[u8InstanceIndex].bInitialized) &&
+            (0U < FLEXCAN_GetRxQueueCountInternal(u8InstanceIndex)))
+        {
+            bAvailable = true;
+        }
+    }
+
+    return bAvailable;
+}
+
+FLEXCAN_Status_t FLEXCAN_Read(FLEXCAN_Type *pBase,
+                              FLEXCAN_Frame_t *pFrame)
+{
+    FLEXCAN_Status_t xStatus = FLEXCAN_STATUS_OK;
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
+    uint8_t u8QueueIndex = 0U;
+    uint16_t u16Head = 0U;
+    uint16_t u16Tail = 0U;
+
+    if ((NULL == pBase) || (NULL == pFrame) ||
+        (false == FLEXCAN_IsSupportedBoardInstance(pBase)))
+    {
+        xStatus = FLEXCAN_STATUS_INVALID_ARGUMENT;
+    }
+    else
+    {
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
+
+        if (false == s_axFlexcanState[u8InstanceIndex].bInitialized)
+        {
+            xStatus = FLEXCAN_STATUS_NOT_INITIALIZED;
+        }
+        else
+        {
+            u16Head = s_axFlexcanState[u8InstanceIndex].u16RxQueueHead;
+            u16Tail = s_axFlexcanState[u8InstanceIndex].u16RxQueueTail;
+
+            if (u16Head == u16Tail)
+            {
+                xStatus = FLEXCAN_STATUS_NO_DATA;
+            }
+            else
+            {
+                u8QueueIndex =
+                    (uint8_t)(u16Tail % FLEXCAN_RX_QUEUE_SIZE);
+
+                *pFrame =
+                    s_aaxFlexcanRxQueue[u8InstanceIndex][u8QueueIndex];
+
+                /* Release this queue slot only after the copy is complete. */
+                s_axFlexcanState[u8InstanceIndex].u16RxQueueTail =
+                    (uint16_t)(u16Tail + 1U);
+            }
+        }
+    }
+
+    return xStatus;
+}
+
+uint8_t FLEXCAN_GetRxQueueCount(FLEXCAN_Type *pBase)
+{
+    uint8_t u8Count = 0U;
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
+
+    if ((NULL != pBase) &&
+        (true == FLEXCAN_IsSupportedBoardInstance(pBase)))
+    {
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
+
+        if (true == s_axFlexcanState[u8InstanceIndex].bInitialized)
+        {
+            u8Count = FLEXCAN_GetRxQueueCountInternal(u8InstanceIndex);
+        }
+    }
+
+    return u8Count;
+}
+
+void FLEXCAN_FlushRxQueue(FLEXCAN_Type *pBase)
+{
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
+
+    if ((NULL != pBase) &&
+        (true == FLEXCAN_IsSupportedBoardInstance(pBase)))
+    {
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
+
+        if (true == s_axFlexcanState[u8InstanceIndex].bInitialized)
+        {
+            /*
+             * The ISR is the sole queue producer and main code is the sole
+             * consumer. Setting tail to the current published head atomically
+             * discards all queued frames.
+             */
+            s_axFlexcanState[u8InstanceIndex].u16RxQueueTail =
+                s_axFlexcanState[u8InstanceIndex].u16RxQueueHead;
+        }
+    }
+
+    return;
+}
+
+FLEXCAN_Status_t FLEXCAN_EnableMbInterrupt(FLEXCAN_Type *pBase,
+                                           uint8_t u8MbIndex)
+{
+    FLEXCAN_Status_t xStatus = FLEXCAN_STATUS_OK;
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
+    uint32_t u32FlagMask = 0U;
+
+    if ((NULL == pBase) ||
+        (false == FLEXCAN_IsSupportedBoardInstance(pBase)))
+    {
+        xStatus = FLEXCAN_STATUS_INVALID_ARGUMENT;
+    }
+    else
+    {
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
+
+        if (false == s_axFlexcanState[u8InstanceIndex].bInitialized)
+        {
+            xStatus = FLEXCAN_STATUS_NOT_INITIALIZED;
+        }
+        else if (false == FLEXCAN_IsMbIndexValid(pBase, u8MbIndex))
+        {
+            xStatus = FLEXCAN_STATUS_INVALID_ARGUMENT;
+        }
+        else
+        {
+            u32FlagMask = FLEXCAN_GetMbFlagMask(u8MbIndex);
+            pBase->IMASK1 |= u32FlagMask;
+        }
+    }
+
+    return xStatus;
+}
+
+FLEXCAN_Status_t FLEXCAN_DisableMbInterrupt(FLEXCAN_Type *pBase,
+                                            uint8_t u8MbIndex)
+{
+    FLEXCAN_Status_t xStatus = FLEXCAN_STATUS_OK;
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
+    uint32_t u32FlagMask = 0U;
+
+    if ((NULL == pBase) ||
+        (false == FLEXCAN_IsSupportedBoardInstance(pBase)))
+    {
+        xStatus = FLEXCAN_STATUS_INVALID_ARGUMENT;
+    }
+    else
+    {
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
+
+        if (false == s_axFlexcanState[u8InstanceIndex].bInitialized)
+        {
+            xStatus = FLEXCAN_STATUS_NOT_INITIALIZED;
+        }
+        else if (false == FLEXCAN_IsMbIndexValid(pBase, u8MbIndex))
+        {
+            xStatus = FLEXCAN_STATUS_INVALID_ARGUMENT;
+        }
+        else
+        {
+            u32FlagMask = FLEXCAN_GetMbFlagMask(u8MbIndex);
+            pBase->IMASK1 &= ~u32FlagMask;
+        }
+    }
+
+    return xStatus;
+}
+
+uint32_t FLEXCAN_GetMbInterruptFlags(FLEXCAN_Type *pBase)
+{
+    uint32_t u32Flags = 0U;
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
+
+    if ((NULL != pBase) &&
+        (true == FLEXCAN_IsSupportedBoardInstance(pBase)))
+    {
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
+
+        if (true == s_axFlexcanState[u8InstanceIndex].bInitialized)
+        {
+            u32Flags = pBase->IFLAG1;
+        }
+    }
+
+    return u32Flags;
+}
+
+void FLEXCAN_ClearMbInterruptFlags(FLEXCAN_Type *pBase,
+                                   uint32_t u32Mask)
+{
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
+
+    if ((NULL != pBase) &&
+        (true == FLEXCAN_IsSupportedBoardInstance(pBase)))
+    {
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
+
+        if (true == s_axFlexcanState[u8InstanceIndex].bInitialized)
+        {
+            /* IFLAG1 is W1C. Never use read-modify-write here. */
+            pBase->IFLAG1 = u32Mask;
+        }
+    }
+
+    return;
+}
+
+void FLEXCAN_SetCallback(FLEXCAN_Type *pBase,
+                         FLEXCAN_Callback_t pfCallback)
+{
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
+
+    if ((NULL != pBase) &&
+        (true == FLEXCAN_IsSupportedBoardInstance(pBase)))
+    {
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
+        s_axFlexcanState[u8InstanceIndex].pfCallback = pfCallback;
+    }
+
+    return;
+}
+
+void FLEXCAN_MBIRQHandler(FLEXCAN_Type *pBase,
+                          uint8_t u8FirstMb,
+                          uint8_t u8LastMb)
+{
+    FLEXCAN_Frame_t xFrame;
+    FLEXCAN_Status_t xStatus = FLEXCAN_STATUS_ERROR;
+    FLEXCAN_Callback_t pfCallback = NULL;
+    uint8_t u8InstanceIndex = FLEXCAN_INSTANCE_INVALID;
+    uint8_t u8MbIndex = 0U;
+    uint32_t u32FlagMask = 0U;
+    uint32_t u32Pending = 0U;
+
+    if ((NULL != pBase) &&
+        (true == FLEXCAN_IsSupportedBoardInstance(pBase)) &&
+        (FLEXCAN_MAX_MB_COUNT > u8FirstMb) &&
+        (FLEXCAN_MAX_MB_COUNT > u8LastMb) &&
+        (u8FirstMb <= u8LastMb))
+    {
+        u8InstanceIndex = FLEXCAN_GetInstanceIndex(pBase);
+
+        if (true == s_axFlexcanState[u8InstanceIndex].bInitialized)
+        {
+            pfCallback = s_axFlexcanState[u8InstanceIndex].pfCallback;
+            u32Pending = pBase->IFLAG1 & pBase->IMASK1;
+
+            for (u8MbIndex = u8FirstMb;
+                 u8MbIndex <= u8LastMb;
+                 u8MbIndex++)
+            {
+                u32FlagMask = FLEXCAN_GetMbFlagMask(u8MbIndex);
+
+                if (0U != (u32Pending & u32FlagMask))
+                {
+                    if (0U != (s_axFlexcanState[u8InstanceIndex].u32RxMbMask &
+                               u32FlagMask))
+                    {
+                        xStatus = FLEXCAN_ReadRxMbInternal(
+                            pBase,
+                            u8MbIndex,
+                            &xFrame,
+                            FLEXCAN_ISR_RX_BUSY_RETRY_COUNT);
+
+                        if (FLEXCAN_STATUS_OK == xStatus)
+                        {
+                            if (true == FLEXCAN_PushRxQueue(u8InstanceIndex,
+                                                            &xFrame))
+                            {
+                                if (NULL != pfCallback)
+                                {
+                                    pfCallback(pBase,
+                                               FLEXCAN_EVENT_RX_MB,
+                                               u8MbIndex);
+                                }
+                            }
+                            else if (NULL != pfCallback)
+                            {
+                                pfCallback(pBase,
+                                           FLEXCAN_EVENT_RX_QUEUE_OVERFLOW,
+                                           u8MbIndex);
+                            }
+                        }
+                        else if (FLEXCAN_STATUS_BUSY != xStatus)
+                        {
+                            /*
+                             * Clear a stale/non-Rx condition to prevent an
+                             * interrupt storm. A BUSY MB is left pending and
+                             * will retrigger after the current ISR exits.
+                             */
+                            pBase->IFLAG1 = u32FlagMask;
+                        }
+                        else
+                        {
+                            /* Leave BUSY Rx flag pending for a later retry. */
+                        }
+                    }
+                    else if (0U !=
+                             (s_axFlexcanState[u8InstanceIndex].u32TxMbMask &
+                              u32FlagMask))
+                    {
+                        /* Tx completion: acknowledge exactly this W1C flag. */
+                        pBase->IFLAG1 = u32FlagMask;
+
+                        if (NULL != pfCallback)
+                        {
+                            pfCallback(pBase,
+                                       FLEXCAN_EVENT_TX_MB,
+                                       u8MbIndex);
+                        }
+                    }
+                    else
+                    {
+                        /* Unclassified enabled MB: clear stale flag safely. */
+                        pBase->IFLAG1 = u32FlagMask;
+                    }
+                }
+            }
+        }
+    }
+
+    return;
 }

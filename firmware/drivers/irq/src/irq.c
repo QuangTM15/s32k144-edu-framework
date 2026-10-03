@@ -13,6 +13,7 @@
 #include "lpuart.h"
 #include "adc.h"
 #include "lpi2c.h"
+#include "flexcan.h"
 
 #include <stddef.h>
 
@@ -20,52 +21,60 @@
 /* IRQ Numbers and Priorities                                                */
 /* ========================================================================= */
 
-#define LPIT0_CH0_IRQ_NUMBER        (48U)
-#define LPIT0_CH0_PRIORITY          (10U)
+#define LPIT0_CH0_IRQ_NUMBER (48U)
+#define LPIT0_CH0_PRIORITY (10U)
 
-#define LPUART1_RXTX_IRQ_NUMBER     (33U)
-#define LPUART1_RXTX_PRIORITY       (10U)
+#define LPUART1_RXTX_IRQ_NUMBER (33U)
+#define LPUART1_RXTX_PRIORITY (10U)
 
-#define LPUART2_RXTX_IRQ_NUMBER     (35U)
-#define LPUART2_RXTX_PRIORITY       (10U)
+#define LPUART2_RXTX_IRQ_NUMBER (35U)
+#define LPUART2_RXTX_PRIORITY (10U)
 
-#define ADC0_IRQ_NUMBER             (39U)
-#define ADC0_IRQ_PRIORITY           (0xA0U)
+#define ADC0_IRQ_NUMBER (39U)
+#define ADC0_IRQ_PRIORITY (0xA0U)
 
-#define LPI2C0_MASTER_IRQ_NUMBER    (24U)
-#define LPI2C0_MASTER_PRIORITY      (10U)
+#define LPI2C0_MASTER_IRQ_NUMBER (24U)
+#define LPI2C0_MASTER_PRIORITY (10U)
 
-#define LPI2C0_SLAVE_IRQ_NUMBER     (25U)
-#define LPI2C0_SLAVE_PRIORITY       (10U)
+#define LPI2C0_SLAVE_IRQ_NUMBER (25U)
+#define LPI2C0_SLAVE_PRIORITY (10U)
 
 /**
  * @brief NVIC interrupt number for PORTD.
  */
-#define PORTD_IRQ_NUMBER            (62U)
-
+#define PORTD_IRQ_NUMBER (62U)
 
 /**
  * @brief NVIC priority for PORTD interrupt.
  */
-#define PORTD_IRQ_PRIORITY          (10U)
+#define PORTD_IRQ_PRIORITY (10U)
 
 /**
  * @brief NVIC interrupt number for PORTE.
  */
-#define PORTE_IRQ_NUMBER            (63U)
+#define PORTE_IRQ_NUMBER (63U)
 
 /**
  * @brief NVIC priority for PORTE interrupt.
  */
-#define PORTE_IRQ_PRIORITY          (10U)
+#define PORTE_IRQ_PRIORITY (10U)
+
+/** @brief FlexCAN0 Message Buffer 0-15 interrupt number. */
+#define FLEXCAN0_MB_0_15_IRQ_NUMBER (81U)
+
+/** @brief FlexCAN0 Message Buffer 16-31 interrupt number. */
+#define FLEXCAN0_MB_16_31_IRQ_NUMBER (82U)
+
+/** @brief FlexCAN0 Message Buffer interrupt priority. */
+#define FLEXCAN0_MB_IRQ_PRIORITY (0xA0U)
 
 /* ========================================================================= */
 /* NVIC Register Access                                                      */
 /* ========================================================================= */
 
-#define NVIC_ISER_BASE              ((volatile uint32_t *)0xE000E100UL)
-#define NVIC_ICPR_BASE              ((volatile uint32_t *)0xE000E280UL)
-#define NVIC_IPR_BASE               ((volatile uint8_t *)0xE000E400UL)
+#define NVIC_ISER_BASE ((volatile uint32_t *)0xE000E100UL)
+#define NVIC_ICPR_BASE ((volatile uint32_t *)0xE000E280UL)
+#define NVIC_IPR_BASE ((volatile uint8_t *)0xE000E400UL)
 
 #define IRQ_NVIC_REG_INDEX(u8IrqNumber) \
     ((u8IrqNumber) / 32U)
@@ -264,6 +273,36 @@ void IRQ_PORTE_SetCallback(irq_callback_t pfCallback)
 }
 
 /* ========================================================================= */
+/* FlexCAN0 IRQ Configuration                                                */
+/* ========================================================================= */
+
+void IRQ_FLEXCAN0_MB_Init(void)
+{
+    /* Clear stale pending requests before enabling the NVIC lines. */
+    NVIC_ICPR_BASE[IRQ_NVIC_REG_INDEX(FLEXCAN0_MB_0_15_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(FLEXCAN0_MB_0_15_IRQ_NUMBER);
+
+    NVIC_ICPR_BASE[IRQ_NVIC_REG_INDEX(FLEXCAN0_MB_16_31_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(FLEXCAN0_MB_16_31_IRQ_NUMBER);
+
+    /* Configure both FlexCAN0 Message Buffer vectors with the same priority. */
+    NVIC_IPR_BASE[FLEXCAN0_MB_0_15_IRQ_NUMBER] =
+        FLEXCAN0_MB_IRQ_PRIORITY;
+
+    NVIC_IPR_BASE[FLEXCAN0_MB_16_31_IRQ_NUMBER] =
+        FLEXCAN0_MB_IRQ_PRIORITY;
+
+    /* Enable MB0-15 and MB16-31 interrupt vectors. */
+    NVIC_ISER_BASE[IRQ_NVIC_REG_INDEX(FLEXCAN0_MB_0_15_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(FLEXCAN0_MB_0_15_IRQ_NUMBER);
+
+    NVIC_ISER_BASE[IRQ_NVIC_REG_INDEX(FLEXCAN0_MB_16_31_IRQ_NUMBER)] =
+        IRQ_NVIC_BIT_MASK(FLEXCAN0_MB_16_31_IRQ_NUMBER);
+
+    return;
+}
+
+/* ========================================================================= */
 /* ISR Implementations                                                       */
 /* ========================================================================= */
 
@@ -338,6 +377,24 @@ void PORTE_IRQHandler(void)
     {
         s_pfPortECallback();
     }
+
+    return;
+}
+
+/* ========================================================================= */
+/* FlexCAN0 ISR Bridge                                                       */
+/* ========================================================================= */
+
+void CAN0_ORed_0_15_MB_IRQHandler(void)
+{
+    FLEXCAN_MBIRQHandler(IP_FLEXCAN0, 0U, 15U);
+
+    return;
+}
+
+void CAN0_ORed_16_31_MB_IRQHandler(void)
+{
+    FLEXCAN_MBIRQHandler(IP_FLEXCAN0, 16U, 31U);
 
     return;
 }
