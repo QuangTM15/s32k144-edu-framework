@@ -3,465 +3,129 @@
 
 /**
  * @file lpspi.h
- * @brief Low Power SPI driver public interface.
+ * @brief Blocking LPSPI0 driver for NXP S32K144 / EduFramework.
+ * @details v3.1: Workarounds for S32K144 ERR051472 and ERR010655.
  *
  * @details
- * This file declares the register-level LPSPI driver APIs used by
- * EduFramework.
+ * SPI bus and clock configuration are owned by this driver. GPIO chip-select
+ * lines are owned by the SPI wrapper or device layer, never by this driver.
+ * Logical slave count is not limited by this interface. The practical limit
+ * comes from GPIO availability, wiring, loading and bus arbitration.
  *
- * The current driver focuses on LPSPI0 because this is the SPI instance
- * exposed by the current MaaZEDU board support configuration.
- *
- * Supported features:
- * - Master and slave role configuration.
- * - SPI clock mode 0, 1, 2, and 3.
- * - MSB-first and LSB-first transfer.
- * - 8-bit and 16-bit frame transfer.
- * - Blocking polling-based transfer with timeout protection.
- * - Runtime clock mode, bit order, frame size, and baudrate update.
- *
- * This driver belongs to the low-level driver layer. Application code
- * should normally use the Arduino-style SPI API instead of calling this
- * driver directly.
+ * This is a polling implementation (no DMA or IRQ transfers). It is not
+ * reentrant; only one application context may access LPSPI0 at a time.
+ * PORT pin mux must be configured before use by the board/SPI layer.
+ * The LPSPI0 functional clock must be SPLL_DIV2 = 40 MHz in this build.
  */
 
-#include "S32K144.h"
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include "S32K144.h"
 
-/* ============================================================
- * LPSPI hardware instance
- * ============================================================ */
+#define LPSPI_INSTANCE IP_LPSPI0
 
-/**
- * @brief Default LPSPI hardware instance used by this driver.
- *
- * @details
- * The current EduFramework SPI stack is built around LPSPI0.
- */
-#define LPSPI_INSTANCE    IP_LPSPI0
-
-/* ============================================================
- * Driver status
- * ============================================================ */
-
-/**
- * @brief LPSPI driver status type.
- */
 typedef uint8_t lpspi_status_t;
+#define LPSPI_STATUS_OK          ((lpspi_status_t)0U)
+#define LPSPI_STATUS_ERROR       ((lpspi_status_t)1U)
+#define LPSPI_STATUS_INVALID_ARG ((lpspi_status_t)2U)
+#define LPSPI_STATUS_NOT_INIT    ((lpspi_status_t)3U)
+#define LPSPI_STATUS_TIMEOUT     ((lpspi_status_t)4U)
+#define LPSPI_STATUS_FIFO_ERROR  ((lpspi_status_t)5U)
 
-#define LPSPI_STATUS_OK             ((lpspi_status_t)0U)
-#define LPSPI_STATUS_ERROR          ((lpspi_status_t)1U)
-#define LPSPI_STATUS_INVALID_ARG    ((lpspi_status_t)2U)
-#define LPSPI_STATUS_NOT_INIT       ((lpspi_status_t)3U)
-#define LPSPI_STATUS_TIMEOUT        ((lpspi_status_t)4U)
-
-/* ============================================================
- * LPSPI role
- * ============================================================ */
-
-/**
- * @brief LPSPI operating role type.
- */
 typedef uint8_t lpspi_mode_t;
+#define LPSPI_MODE_MASTER ((lpspi_mode_t)0U)
+#define LPSPI_MODE_SLAVE  ((lpspi_mode_t)1U)
 
-#define LPSPI_MODE_MASTER    ((lpspi_mode_t)0U)
-#define LPSPI_MODE_SLAVE     ((lpspi_mode_t)1U)
-
-/* ============================================================
- * SPI clock mode
- * ============================================================ */
-
-/**
- * @brief SPI clock mode type.
- *
- * @details
- * SPI modes define CPOL and CPHA:
- * - Mode 0: CPOL = 0, CPHA = 0
- * - Mode 1: CPOL = 0, CPHA = 1
- * - Mode 2: CPOL = 1, CPHA = 0
- * - Mode 3: CPOL = 1, CPHA = 1
- */
 typedef uint8_t lpspi_clock_mode_t;
+#define LPSPI_MODE0 ((lpspi_clock_mode_t)0U)
+#define LPSPI_MODE1 ((lpspi_clock_mode_t)1U)
+#define LPSPI_MODE2 ((lpspi_clock_mode_t)2U)
+#define LPSPI_MODE3 ((lpspi_clock_mode_t)3U)
 
-#define LPSPI_MODE0    ((lpspi_clock_mode_t)0U)
-#define LPSPI_MODE1    ((lpspi_clock_mode_t)1U)
-#define LPSPI_MODE2    ((lpspi_clock_mode_t)2U)
-#define LPSPI_MODE3    ((lpspi_clock_mode_t)3U)
-
-/* ============================================================
- * Bit order
- * ============================================================ */
-
-/**
- * @brief LPSPI bit order type.
- */
 typedef uint8_t lpspi_bit_order_t;
+#define LPSPI_MSB_FIRST ((lpspi_bit_order_t)0U)
+#define LPSPI_LSB_FIRST ((lpspi_bit_order_t)1U)
 
-#define LPSPI_MSB_FIRST    ((lpspi_bit_order_t)0U)
-#define LPSPI_LSB_FIRST    ((lpspi_bit_order_t)1U)
-
-/* ============================================================
- * Frame size
- * ============================================================ */
-
-/**
- * @brief LPSPI frame size type.
- *
- * @details
- * The values represent the actual number of bits in one SPI frame.
- */
 typedef uint8_t lpspi_frameSize_t;
+#define LPSPI_FRAME_SIZE_8  ((lpspi_frameSize_t)8U)
+#define LPSPI_FRAME_SIZE_16 ((lpspi_frameSize_t)16U)
 
-#define LPSPI_FRAME_SIZE_8     ((lpspi_frameSize_t)8U)
-#define LPSPI_FRAME_SIZE_16    ((lpspi_frameSize_t)16U)
-
-/* ============================================================
- * Configuration structure
- * ============================================================ */
-
-/**
- * @brief LPSPI initialization configuration.
- */
+/** @brief Peripheral mode and initial SPI settings. */
 typedef struct
 {
-    lpspi_mode_t mode;                 /**< Master or slave role. */
-    lpspi_clock_mode_t clockMode;      /**< SPI clock mode. */
-    lpspi_bit_order_t bitOrder;        /**< MSB-first or LSB-first transfer. */
-    lpspi_frameSize_t frameSize;       /**< SPI frame size in bits. */
-    uint32_t baudrate;                 /**< Target baudrate in Hz, used in master mode. */
+    lpspi_mode_t mode;
+    lpspi_clock_mode_t clockMode;
+    lpspi_bit_order_t bitOrder;
+    lpspi_frameSize_t frameSize;
+    uint32_t baudrate;
 } lpspi_config_t;
 
-/* ============================================================
- * Init / control API
- * ============================================================ */
+/** @brief Independent settings for one logical SPI transaction. */
+typedef struct
+{
+    lpspi_clock_mode_t clockMode;
+    lpspi_bit_order_t bitOrder;
+    lpspi_frameSize_t frameSize;
+    uint32_t baudrate;
+} lpspi_settings_t;
 
-/**
- * @brief Initialize LPSPI0.
- *
- * @details
- * This function configures the LPSPI0 peripheral clock, operating role,
- * pin behavior, frame format, FIFO watermarks, and baudrate.
- *
- * In master mode, baudrate is converted to the closest supported
- * PRESCALE and SCKDIV configuration that does not exceed the requested
- * target baudrate when possible.
- *
- * @param[in] config
- * Pointer to LPSPI configuration.
- *
- * @return lpspi_status_t
- *
- * @retval LPSPI_STATUS_OK
- * LPSPI initialized successfully.
- *
- * @retval LPSPI_STATUS_INVALID_ARG
- * Configuration pointer or field is invalid.
- *
- * @retval LPSPI_STATUS_ERROR
- * Baudrate calculation or hardware setup failed.
- */
+/** @brief Initialize LPSPI0 once; requires configured functional clock and pin mux. */
 lpspi_status_t LPSPI_Init(const lpspi_config_t *config);
 
-/**
- * @brief Enable the LPSPI module.
- *
- * @details
- * This function sets the module enable bit after the peripheral has been
- * initialized.
- *
- * @return None.
- */
+/** @brief Enable or disable the initialized peripheral without discarding settings. */
 void LPSPI_Enable(void);
-
-/**
- * @brief Disable the LPSPI module.
- *
- * @details
- * This function clears the module enable bit. Configuration registers are
- * not reset.
- *
- * @return None.
- */
 void LPSPI_Disable(void);
 
-/* ============================================================
- * Runtime configuration API
- * ============================================================ */
+/**
+ * @brief Change all bus settings for the next SPI transaction.
+ * @details Must be called with every external GPIO CS inactive. Validates
+ * every parameter before touching hardware; preserves prior enable state.
+ * In master mode, the requested SCK is rounded down to a supported rate
+ * and capped at 10 MHz for the current S32K144 RUN clock configuration.
+ */
+lpspi_status_t LPSPI_ApplySettings(const lpspi_settings_t *settings);
+
+/** @brief Wait until the command queue is empty and hardware is idle. */
+lpspi_status_t LPSPI_WaitIdle(void);
 
 /**
- * @brief Set SPI clock mode.
- *
- * @param[in] mode
- * SPI clock mode.
- *
- * @return lpspi_status_t
- *
- * @retval LPSPI_STATUS_OK
- * Clock mode updated successfully.
- *
- * @retval LPSPI_STATUS_INVALID_ARG
- * Unsupported clock mode.
- *
- * @retval LPSPI_STATUS_NOT_INIT
- * LPSPI has not been initialized.
- *
- * @retval LPSPI_STATUS_TIMEOUT
- * Module did not become idle before reconfiguration.
+ * @brief Clear a fault by resetting both FIFOs and reloading the SPI command.
+ * @details This aborts any unfinished transaction. Caller must release CS
+ * and retry from the beginning of the device transaction after recovery.
  */
+lpspi_status_t LPSPI_Recover(void);
+
+/** @brief Return the nearest supported master SCK frequency in Hz. */
+uint32_t LPSPI_GetActualBaudRate(void);
+
+/** @brief Legacy runtime settings APIs (kept source-compatible). */
 lpspi_status_t LPSPI_SetMode(lpspi_clock_mode_t mode);
-
-/**
- * @brief Set SPI bit order.
- *
- * @param[in] bitOrder
- * Bit order configuration.
- *
- * @return lpspi_status_t
- *
- * @retval LPSPI_STATUS_OK
- * Bit order updated successfully.
- *
- * @retval LPSPI_STATUS_INVALID_ARG
- * Unsupported bit order.
- *
- * @retval LPSPI_STATUS_NOT_INIT
- * LPSPI has not been initialized.
- *
- * @retval LPSPI_STATUS_TIMEOUT
- * Module did not become idle before reconfiguration.
- */
 lpspi_status_t LPSPI_SetBitOrder(lpspi_bit_order_t bitOrder);
-
-/**
- * @brief Set SPI baudrate.
- *
- * @details
- * This function recalculates the LPSPI PRESCALE and SCKDIV fields based
- * on the requested target baudrate.
- *
- * @param[in] baudrate
- * Target SPI baudrate in Hz.
- *
- * @return lpspi_status_t
- *
- * @retval LPSPI_STATUS_OK
- * Baudrate updated successfully.
- *
- * @retval LPSPI_STATUS_INVALID_ARG
- * Baudrate is invalid.
- *
- * @retval LPSPI_STATUS_NOT_INIT
- * LPSPI has not been initialized.
- *
- * @retval LPSPI_STATUS_TIMEOUT
- * Module did not become idle before reconfiguration.
- *
- * @retval LPSPI_STATUS_ERROR
- * Requested baudrate cannot be generated by the current clock setup.
- */
 lpspi_status_t LPSPI_SetBaudRate(uint32_t baudrate);
-
-/**
- * @brief Set SPI frame size.
- *
- * @details
- * This function updates the LPSPI TCR FRAMESZ field. It is kept as a
- * void function to preserve the existing public API.
- *
- * @param[in] frameSize
- * Target frame size.
- *
- * @return None.
- */
 void LPSPI_SetFrameSize(lpspi_frameSize_t frameSize);
+lpspi_status_t LPSPI_SetFrameSizeChecked(lpspi_frameSize_t frameSize);
 
-/* ============================================================
- * Transfer API
- * ============================================================ */
-
-/**
- * @brief Transfer one 8-bit SPI frame.
- *
- * @details
- * In SPI master mode, writing one frame also receives one frame. This
- * function writes txData and stores the received byte in rxData.
- *
- * @param[in] txData
- * Byte to transmit.
- *
- * @param[out] rxData
- * Pointer used to receive one byte.
- *
- * @return lpspi_status_t
- *
- * @retval LPSPI_STATUS_OK
- * Transfer completed successfully.
- *
- * @retval LPSPI_STATUS_INVALID_ARG
- * rxData pointer is invalid.
- *
- * @retval LPSPI_STATUS_NOT_INIT
- * LPSPI has not been initialized or enabled.
- *
- * @retval LPSPI_STATUS_TIMEOUT
- * TX or RX polling timed out.
- */
+/** @brief Blocking full-duplex transfers; always consume receive FIFO data. */
 lpspi_status_t LPSPI_Transfer8(uint8_t txData, uint8_t *rxData);
-
-/**
- * @brief Transfer one 16-bit SPI frame.
- *
- * @param[in] txData
- * 16-bit data to transmit.
- *
- * @param[out] rxData
- * Pointer used to receive 16-bit data.
- *
- * @return lpspi_status_t
- *
- * @retval LPSPI_STATUS_OK
- * Transfer completed successfully.
- *
- * @retval LPSPI_STATUS_INVALID_ARG
- * rxData pointer is invalid.
- *
- * @retval LPSPI_STATUS_NOT_INIT
- * LPSPI has not been initialized or enabled.
- *
- * @retval LPSPI_STATUS_TIMEOUT
- * TX or RX polling timed out.
- */
 lpspi_status_t LPSPI_Transfer16(uint16_t txData, uint16_t *rxData);
+lpspi_status_t LPSPI_TransferBuffer(const uint8_t *txBuf, uint8_t *rxBuf, uint32_t length);
 
-/**
- * @brief Transfer a buffer using 8-bit SPI frames.
- *
- * @details
- * If txBuf is null, dummy bytes are transmitted. If rxBuf is null,
- * received bytes are discarded.
- *
- * At least one of txBuf or rxBuf must be non-null.
- *
- * @param[in] txBuf
- * Transmit buffer pointer. Can be null for read-only transfer.
- *
- * @param[out] rxBuf
- * Receive buffer pointer. Can be null for write-only transfer.
- *
- * @param[in] length
- * Number of bytes to transfer.
- *
- * @return lpspi_status_t
- *
- * @retval LPSPI_STATUS_OK
- * Buffer transfer completed successfully.
- *
- * @retval LPSPI_STATUS_INVALID_ARG
- * Both buffers are null.
- *
- * @retval LPSPI_STATUS_NOT_INIT
- * LPSPI has not been initialized or enabled.
- *
- * @retval LPSPI_STATUS_TIMEOUT
- * TX or RX polling timed out.
- */
-lpspi_status_t LPSPI_TransferBuffer(const uint8_t *txBuf,
-                                    uint8_t *rxBuf,
-                                    uint32_t length);
-
-/* ============================================================
- * Basic read / write API
- * ============================================================ */
-
-/**
- * @brief Write one 8-bit SPI frame.
- *
- * @details
- * In master mode, this function discards the received byte generated by
- * the SPI clock. This prevents stale data from accumulating in RX FIFO.
- *
- * @param[in] data
- * Byte to write.
- *
- * @return lpspi_status_t
- */
+/** @brief Blocking write/read helpers; master reads clock out dummy ones. */
 lpspi_status_t LPSPI_Write8(uint8_t data);
-
-/**
- * @brief Write one 16-bit SPI frame.
- *
- * @details
- * In master mode, this function discards the received frame generated by
- * the SPI clock.
- *
- * @param[in] data
- * 16-bit data to write.
- *
- * @return lpspi_status_t
- */
 lpspi_status_t LPSPI_Write16(uint16_t data);
-
-/**
- * @brief Read one 8-bit SPI frame.
- *
- * @details
- * In master mode, SPI cannot read without generating clock. Therefore,
- * this function transmits a dummy byte and returns the received byte.
- *
- * @param[out] data
- * Pointer used to receive one byte.
- *
- * @return lpspi_status_t
- */
 lpspi_status_t LPSPI_Read8(uint8_t *data);
-
-/**
- * @brief Read one 16-bit SPI frame.
- *
- * @details
- * In master mode, this function transmits a dummy 16-bit frame to
- * generate clock for reading.
- *
- * @param[out] data
- * Pointer used to receive 16-bit data.
- *
- * @return lpspi_status_t
- */
 lpspi_status_t LPSPI_Read16(uint16_t *data);
 
-/* ============================================================
- * Status API
- * ============================================================ */
-
-/**
- * @brief Check whether TX FIFO can accept data.
- *
- * @return bool
- *
- * @retval true TX data can be written.
- * @retval false TX FIFO is not ready.
- */
+/** @brief Raw state queries (legacy API). */
 bool LPSPI_IsTxReady(void);
-
-/**
- * @brief Check whether RX FIFO contains unread data.
- *
- * @return bool
- *
- * @retval true RX data is available.
- * @retval false RX FIFO is empty.
- */
 bool LPSPI_IsRxReady(void);
-
-/**
- * @brief Check whether the last transfer is complete.
- *
- * @return bool
- *
- * @retval true Transfer complete flag is set.
- * @retval false Transfer complete flag is not set.
- */
 bool LPSPI_IsTransferComplete(void);
+
+/** @brief Latest REF/TEF snapshot, preserved when LPSPI_Recover() clears flags. */
+uint32_t LPSPI_GetLastFaultSR(void);
+uint32_t LPSPI_GetLastFaultFSR(void);
+uint32_t LPSPI_GetLastFaultTCR(void);
+uint32_t LPSPI_GetLastFaultCR(void);
+uint32_t LPSPI_GetLastFaultCFGR1(void);
 
 #endif /* LPSPI_H */
