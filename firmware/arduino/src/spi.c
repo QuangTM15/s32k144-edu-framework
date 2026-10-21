@@ -1,834 +1,489 @@
 /**
  * @file spi.c
- * @brief Arduino-style SPI API implementation for EduFramework.
- *
- * @details
- * This file implements the Arduino-style SPI API on top of the low-level
- * LPSPI driver.
- *
- * Design notes:
- * - This layer owns board-level SPI pin initialization.
- * - This layer does not access LPSPI registers directly.
- * - All SPI transfers are blocking.
- * - Public API compatibility is preserved with the previous SPI module.
+ * @brief Arduino SPI0 wrapper using LPSPI v3.1 blocking driver.
+ * @details No direct LPSPI register access and no fixed slave table.
+ * Device libraries own GPIO CS pins; this module serializes SPI settings
+ * across transactions but is not an RTOS lock or ISR-safe mutex.
  */
 
 #include "spi.h"
-
 #include "S32K144.h"
 #include "port.h"
 #include "lpspi.h"
 
-/* ========================================================================= */
-/* Private Macros                                                             */
-/* ========================================================================= */
+#define SPI_DEFAULT_FREQUENCY_HZ (1000000UL)
+#define SPI_PORT_NAME (PORT_NAME_B)
+#define SPI_PORT_BASE (IP_PORTB)
+#define SPI_PIN_PCS0 (0U)
+#define SPI_PIN_SOUT (1U)
+#define SPI_PIN_SCK (2U)
+#define SPI_PIN_SIN (3U)
+#define SPI_PIN_MUX (PORT_MUX_ALT3)
 
-/**
- * @brief Boolean-like state value used for internal initialization flag.
- */
-#define SPI_STATE_UNINITIALIZED          (0U)
+static bool s_Initialized = false;
+static bool s_TransactionActive = false;
+static SPI_Role_t s_Role = SPI_ROLE_MASTER;
+static SPI_Settings_t s_Settings = {SPI_MODE0, SPI_MSBFIRST, SPI_FRAME_SIZE_8, SPI_DEFAULT_FREQUENCY_HZ};
+static SPI_Status_t s_LastStatus = SPI_STATUS_NOT_INIT;
+static SPI_Status_t s_TransactionError = SPI_STATUS_OK;
 
-/**
- * @brief Boolean-like state value used for internal initialization flag.
- */
-#define SPI_STATE_INITIALIZED            (1U)
-
-/**
- * @brief Default master baudrate in Hz.
- */
-#define SPI_DEFAULT_FREQUENCY_HZ         (1000000UL)
-
-/**
- * @brief Frequency value used in slave mode.
- */
-#define SPI_SLAVE_FREQUENCY_HZ           (0UL)
-
-/**
- * @brief Default SPI clock mode.
- */
-#define SPI_DEFAULT_MODE                 (SPI_MODE0)
-
-/**
- * @brief Default SPI bit order.
- */
-#define SPI_DEFAULT_BIT_ORDER            (SPI_MSBFIRST)
-
-/**
- * @brief Default SPI frame size.
- */
-#define SPI_DEFAULT_FRAME_SIZE           (LPSPI_FRAME_SIZE_8)
-
-/**
- * @brief Error return value for 8-bit read or transfer APIs.
- */
-#define SPI_ERROR_VALUE_8                (0U)
-
-/**
- * @brief Error return value for 16-bit read or transfer APIs.
- */
-#define SPI_ERROR_VALUE_16               (0U)
-
-/**
- * @brief PORT name used by LPSPI0 pins.
- */
-#define SPI_PORT_NAME                    (PORT_NAME_B)
-
-/**
- * @brief PORT base used by LPSPI0 pins.
- */
-#define SPI_PORT_BASE                    (IP_PORTB)
-
-/**
- * @brief LPSPI0 PCS0 pin.
- */
-#define SPI_PIN_PCS0                     (0U)
-
-/**
- * @brief LPSPI0 SOUT pin.
- */
-#define SPI_PIN_SOUT                     (1U)
-
-/**
- * @brief LPSPI0 SCK pin.
- */
-#define SPI_PIN_SCK                      (2U)
-
-/**
- * @brief LPSPI0 SIN pin.
- */
-#define SPI_PIN_SIN                      (3U)
-
-/**
- * @brief PORT mux value for LPSPI0 on PTB0..PTB3.
- */
-#define SPI_PIN_MUX_LPSPI0               (PORT_MUX_ALT3)
-
-/* ========================================================================= */
-/* Private Variables                                                          */
-/* ========================================================================= */
-
-/**
- * @brief Current SPI role stored by the Arduino SPI layer.
- */
-static SPI_Role_t s_SpiRole = SPI_ROLE_MASTER;
-
-/**
- * @brief SPI initialization state.
- */
-static uint8_t s_u8SpiInitialized = SPI_STATE_UNINITIALIZED;
-
-/**
- * @brief Current SPI frequency in Hz.
- */
-static uint32_t s_u32SpiFrequency = SPI_DEFAULT_FREQUENCY_HZ;
-
-/**
- * @brief Current SPI clock mode.
- */
-static SPI_Mode_t s_SpiMode = SPI_DEFAULT_MODE;
-
-/**
- * @brief Current SPI bit order.
- */
-static SPI_BitOrder_t s_SpiBitOrder = SPI_DEFAULT_BIT_ORDER;
-
-/* ========================================================================= */
-/* Private Function Prototypes                                                */
-/* ========================================================================= */
-
-static bool SPI_IsValidRole(SPI_Role_t Role);
-static bool SPI_IsValidMode(SPI_Mode_t Mode);
-static bool SPI_IsValidBitOrder(SPI_BitOrder_t BitOrder);
-static bool SPI_IsInitialized(void);
-static void SPI_PinInit(void);
-static lpspi_mode_t SPI_ToLpspiRole(SPI_Role_t Role);
-static lpspi_clock_mode_t SPI_ToLpspiMode(SPI_Mode_t Mode);
-static lpspi_bit_order_t SPI_ToLpspiBitOrder(SPI_BitOrder_t BitOrder);
-static lpspi_config_t SPI_BuildLpspiConfig(SPI_Role_t Role,
-                                           uint32_t u32Frequency,
-                                           SPI_Mode_t Mode,
-                                           SPI_BitOrder_t BitOrder);
-
-/* ========================================================================= */
-/* Private Functions                                                          */
-/* ========================================================================= */
-
-/**
- * @brief Check whether a SPI role value is valid.
- *
- * @param Role SPI role value.
- *
- * @return Validity state.
- *
- * @retval true Role is valid.
- * @retval false Role is invalid.
- */
-static bool SPI_IsValidRole(SPI_Role_t Role)
+/** @brief Validate an SPI role. */
+static bool SPI_ValidRole(SPI_Role_t role)
 {
-    bool bIsValid = false;
-
-    if ((SPI_ROLE_MASTER == Role) || (SPI_ROLE_SLAVE == Role))
-    {
-        bIsValid = true;
-    }
-    else
-    {
-        bIsValid = false;
-    }
-
-    return bIsValid;
+    return ((role == SPI_ROLE_MASTER) || (role == SPI_ROLE_SLAVE));
 }
 
-/**
- * @brief Check whether a SPI mode value is valid.
- *
- * @param Mode SPI mode value.
- *
- * @return Validity state.
- *
- * @retval true Mode is valid.
- * @retval false Mode is invalid.
- */
-static bool SPI_IsValidMode(SPI_Mode_t Mode)
+/** @brief Validate mode, bit order and frame size without hardware accesses. */
+static bool SPI_ValidSettings(const SPI_Settings_t *settings)
 {
-    bool bIsValid = false;
+    bool valid = false;
 
-    if ((SPI_MODE0 == Mode) ||
-        (SPI_MODE1 == Mode) ||
-        (SPI_MODE2 == Mode) ||
-        (SPI_MODE3 == Mode))
+    if (settings != (const SPI_Settings_t *)0)
     {
-        bIsValid = true;
-    }
-    else
-    {
-        bIsValid = false;
+        valid = ((settings->mode <= SPI_MODE3) && (settings->bitOrder <= SPI_LSBFIRST) && ((settings->frameSize == SPI_FRAME_SIZE_8) || (settings->frameSize == SPI_FRAME_SIZE_16)) && (settings->frequency != 0UL));
     }
 
-    return bIsValid;
+    return valid;
 }
 
-/**
- * @brief Check whether a SPI bit order value is valid.
- *
- * @param BitOrder SPI bit order value.
- *
- * @return Validity state.
- *
- * @retval true Bit order is valid.
- * @retval false Bit order is invalid.
- */
-static bool SPI_IsValidBitOrder(SPI_BitOrder_t BitOrder)
+/** @brief Translate a low-level status while keeping the layers independent. */
+static SPI_Status_t SPI_FromDriverStatus(lpspi_status_t status)
 {
-    bool bIsValid = false;
+    SPI_Status_t result = SPI_STATUS_ERROR;
 
-    if ((SPI_MSBFIRST == BitOrder) || (SPI_LSBFIRST == BitOrder))
+    switch (status)
     {
-        bIsValid = true;
-    }
-    else
-    {
-        bIsValid = false;
+        case LPSPI_STATUS_OK:          result = SPI_STATUS_OK; break;
+        case LPSPI_STATUS_ERROR:       result = SPI_STATUS_ERROR; break;
+        case LPSPI_STATUS_INVALID_ARG: result = SPI_STATUS_INVALID_ARG; break;
+        case LPSPI_STATUS_NOT_INIT:    result = SPI_STATUS_NOT_INIT; break;
+        case LPSPI_STATUS_TIMEOUT:     result = SPI_STATUS_TIMEOUT; break;
+        case LPSPI_STATUS_FIFO_ERROR:  result = SPI_STATUS_FIFO_ERROR; break;
+        default:                       result = SPI_STATUS_ERROR; break;
     }
 
-    return bIsValid;
+    return result;
 }
 
-/**
- * @brief Check whether SPI has been initialized.
- *
- * @return Initialization state.
- *
- * @retval true SPI has been initialized.
- * @retval false SPI has not been initialized.
- */
-static bool SPI_IsInitialized(void)
+/** @brief Preserve the first transfer fault until the current transaction ends. */
+static void SPI_RecordTransferStatus(SPI_Status_t status)
 {
-    bool bIsInitialized = false;
-
-    if (SPI_STATE_INITIALIZED == s_u8SpiInitialized)
+    if (s_TransactionActive && (s_TransactionError == SPI_STATUS_OK) && (status != SPI_STATUS_OK))
     {
-        bIsInitialized = true;
+        s_TransactionError = status;
     }
-    else
-    {
-        bIsInitialized = false;
-    }
-
-    return bIsInitialized;
 }
 
-/**
- * @brief Initialize SPI pins for LPSPI0.
- *
- * @details
- * The current EduFramework SPI bus uses the tested MaaZEDU mapping:
- * - PTB0 = PCS0
- * - PTB1 = SOUT
- * - PTB2 = SCK
- * - PTB3 = SIN
- */
-static void SPI_PinInit(void)
+/** @brief Configure LPSPI0 SOUT/SCK/SIN; PCS0 is for slave input only. */
+static void SPI_PinInit(SPI_Role_t role)
 {
     PORT_EnableClock(SPI_PORT_NAME);
-
-    PORT_SetPinMux(SPI_PORT_BASE,
-                   SPI_PIN_PCS0,
-                   SPI_PIN_MUX_LPSPI0);
-
-    PORT_SetPinMux(SPI_PORT_BASE,
-                   SPI_PIN_SOUT,
-                   SPI_PIN_MUX_LPSPI0);
-
-    PORT_SetPinMux(SPI_PORT_BASE,
-                   SPI_PIN_SCK,
-                   SPI_PIN_MUX_LPSPI0);
-
-    PORT_SetPinMux(SPI_PORT_BASE,
-                   SPI_PIN_SIN,
-                   SPI_PIN_MUX_LPSPI0);
-
-    return;
+    PORT_SetPinMux(SPI_PORT_BASE, SPI_PIN_SOUT, SPI_PIN_MUX);
+    PORT_SetPinMux(SPI_PORT_BASE, SPI_PIN_SCK, SPI_PIN_MUX);
+    PORT_SetPinMux(SPI_PORT_BASE, SPI_PIN_SIN, SPI_PIN_MUX);
+    if (role == SPI_ROLE_SLAVE)
+    {
+        PORT_SetPinMux(SPI_PORT_BASE, SPI_PIN_PCS0, SPI_PIN_MUX);
+    }
 }
 
-/**
- * @brief Convert Arduino SPI role to low-level LPSPI role.
- *
- * @param Role Arduino SPI role.
- *
- * @return Low-level LPSPI role.
- */
-static lpspi_mode_t SPI_ToLpspiRole(SPI_Role_t Role)
+/** @brief Convert transaction parameters to low-level settings. */
+static lpspi_settings_t SPI_ToDriverSettings(const SPI_Settings_t *settings)
 {
-    lpspi_mode_t LpspiRole = LPSPI_MODE_MASTER;
+    lpspi_settings_t result = {0U};
 
-    if (SPI_ROLE_SLAVE == Role)
+    result.clockMode = (lpspi_clock_mode_t)settings->mode;
+    result.bitOrder = (lpspi_bit_order_t)settings->bitOrder;
+    result.frameSize = (lpspi_frameSize_t)settings->frameSize;
+    result.baudrate = settings->frequency;
+
+    return result;
+}
+
+/** @brief Configure LPSPI0 and preserve the current role on failures. */
+void SPI_beginEx(SPI_Role_t role, uint32_t frequency, SPI_Mode_t mode, SPI_BitOrder_t bitOrder)
+{
+    SPI_Settings_t proposed = {mode, bitOrder, SPI_FRAME_SIZE_8, frequency};
+    lpspi_config_t initial = {0U};
+    lpspi_settings_t driverSettings = {0U};
+    lpspi_status_t status = LPSPI_STATUS_ERROR;
+
+    if (s_TransactionActive)
     {
-        LpspiRole = LPSPI_MODE_SLAVE;
+        s_LastStatus = SPI_STATUS_BUSY;
+    }
+    else if (!SPI_ValidRole(role) || (mode > SPI_MODE3) || (bitOrder > SPI_LSBFIRST))
+    {
+        s_LastStatus = SPI_STATUS_INVALID_ARG;
     }
     else
     {
-        LpspiRole = LPSPI_MODE_MASTER;
+        if (role == SPI_ROLE_MASTER)
+        {
+            if (frequency == 0UL)
+            {
+                proposed.frequency = SPI_DEFAULT_FREQUENCY_HZ;
+            }
+        }
+        else
+        {
+            proposed.frequency = 0UL;
+        }
+        if (s_Initialized && (s_Role == SPI_ROLE_MASTER) && (role == SPI_ROLE_MASTER))
+        {
+            driverSettings = SPI_ToDriverSettings(&proposed);
+            status = LPSPI_ApplySettings(&driverSettings);
+        }
+        else
+        {
+            SPI_PinInit(role);
+            initial.mode = (role == SPI_ROLE_MASTER) ? LPSPI_MODE_MASTER : LPSPI_MODE_SLAVE;
+            initial.clockMode = (lpspi_clock_mode_t)proposed.mode;
+            initial.bitOrder = (lpspi_bit_order_t)proposed.bitOrder;
+            initial.frameSize = LPSPI_FRAME_SIZE_8;
+            initial.baudrate = proposed.frequency;
+            status = LPSPI_Init(&initial);
+        }
+        s_LastStatus = SPI_FromDriverStatus(status);
+        if (status == LPSPI_STATUS_OK)
+        {
+            s_Initialized = true;
+            s_Role = role;
+            s_Settings = proposed;
+        }
     }
-
-    return LpspiRole;
 }
 
-/**
- * @brief Convert Arduino SPI mode to low-level LPSPI clock mode.
- *
- * @param Mode Arduino SPI mode.
- *
- * @return Low-level LPSPI clock mode.
- */
-static lpspi_clock_mode_t SPI_ToLpspiMode(SPI_Mode_t Mode)
-{
-    lpspi_clock_mode_t LpspiMode = LPSPI_MODE0;
-
-    switch (Mode)
-    {
-        case SPI_MODE0:
-            LpspiMode = LPSPI_MODE0;
-            break;
-
-        case SPI_MODE1:
-            LpspiMode = LPSPI_MODE1;
-            break;
-
-        case SPI_MODE2:
-            LpspiMode = LPSPI_MODE2;
-            break;
-
-        case SPI_MODE3:
-            LpspiMode = LPSPI_MODE3;
-            break;
-
-        default:
-            LpspiMode = LPSPI_MODE0;
-            break;
-    }
-
-    return LpspiMode;
-}
-
-/**
- * @brief Convert Arduino SPI bit order to low-level LPSPI bit order.
- *
- * @param BitOrder Arduino SPI bit order.
- *
- * @return Low-level LPSPI bit order.
- */
-static lpspi_bit_order_t SPI_ToLpspiBitOrder(SPI_BitOrder_t BitOrder)
-{
-    lpspi_bit_order_t LpspiBitOrder = LPSPI_MSB_FIRST;
-
-    if (SPI_LSBFIRST == BitOrder)
-    {
-        LpspiBitOrder = LPSPI_LSB_FIRST;
-    }
-    else
-    {
-        LpspiBitOrder = LPSPI_MSB_FIRST;
-    }
-
-    return LpspiBitOrder;
-}
-
-/**
- * @brief Build low-level LPSPI configuration from Arduino SPI settings.
- *
- * @param Role Arduino SPI role.
- * @param u32Frequency SPI frequency in Hz.
- * @param Mode Arduino SPI mode.
- * @param BitOrder Arduino SPI bit order.
- *
- * @return LPSPI configuration object.
- */
-static lpspi_config_t SPI_BuildLpspiConfig(SPI_Role_t Role,
-                                           uint32_t u32Frequency,
-                                           SPI_Mode_t Mode,
-                                           SPI_BitOrder_t BitOrder)
-{
-    lpspi_config_t Config = {0U};
-
-    Config.mode = SPI_ToLpspiRole(Role);
-    Config.clockMode = SPI_ToLpspiMode(Mode);
-    Config.bitOrder = SPI_ToLpspiBitOrder(BitOrder);
-    Config.frameSize = SPI_DEFAULT_FRAME_SIZE;
-
-    if (SPI_ROLE_MASTER == Role)
-    {
-        Config.baudrate = u32Frequency;
-    }
-    else
-    {
-        Config.baudrate = SPI_SLAVE_FREQUENCY_HZ;
-    }
-
-    return Config;
-}
-
-/* ========================================================================= */
-/* Public Functions                                                           */
-/* ========================================================================= */
-
-/**
- * @copydoc SPI_begin
- */
+/** @brief Initialize the bus with legacy defaults. */
 void SPI_begin(SPI_Role_t role)
 {
-    if (SPI_ROLE_MASTER == role)
-    {
-        SPI_beginEx(SPI_ROLE_MASTER,
-                    SPI_DEFAULT_FREQUENCY_HZ,
-                    SPI_DEFAULT_MODE,
-                    SPI_DEFAULT_BIT_ORDER);
-    }
-    else if (SPI_ROLE_SLAVE == role)
-    {
-        SPI_beginEx(SPI_ROLE_SLAVE,
-                    SPI_SLAVE_FREQUENCY_HZ,
-                    SPI_DEFAULT_MODE,
-                    SPI_DEFAULT_BIT_ORDER);
-    }
-    else
-    {
-        /*
-         * Invalid role. Keep API behavior safe by doing nothing.
-         */
-    }
-
-    return;
+    SPI_beginEx(role, SPI_DEFAULT_FREQUENCY_HZ, SPI_MODE0, SPI_MSBFIRST);
 }
 
-/**
- * @copydoc SPI_beginEx
- */
-void SPI_beginEx(SPI_Role_t role,
-                 uint32_t frequency,
-                 SPI_Mode_t mode,
-                 SPI_BitOrder_t bitOrder)
-{
-    lpspi_config_t Config = {0U};
-    lpspi_status_t Status = LPSPI_STATUS_ERROR;
-    uint32_t u32EffectiveFrequency = frequency;
-
-    if ((true == SPI_IsValidRole(role)) &&
-        (true == SPI_IsValidMode(mode)) &&
-        (true == SPI_IsValidBitOrder(bitOrder)))
-    {
-        if (SPI_ROLE_MASTER == role)
-        {
-            if (0UL == frequency)
-            {
-                u32EffectiveFrequency = SPI_DEFAULT_FREQUENCY_HZ;
-            }
-            else
-            {
-                u32EffectiveFrequency = frequency;
-            }
-        }
-        else
-        {
-            u32EffectiveFrequency = SPI_SLAVE_FREQUENCY_HZ;
-        }
-
-        if (true == SPI_IsInitialized())
-        {
-            SPI_end();
-        }
-        else
-        {
-            /* SPI is not initialized yet. No need to disable it. */
-        }
-
-        SPI_PinInit();
-
-        Config = SPI_BuildLpspiConfig(role,
-                                      u32EffectiveFrequency,
-                                      mode,
-                                      bitOrder);
-
-        Status = LPSPI_Init(&Config);
-
-        if (LPSPI_STATUS_OK == Status)
-        {
-            s_SpiRole = role;
-            s_u32SpiFrequency = u32EffectiveFrequency;
-            s_SpiMode = mode;
-            s_SpiBitOrder = bitOrder;
-            s_u8SpiInitialized = SPI_STATE_INITIALIZED;
-        }
-        else
-        {
-            s_u8SpiInitialized = SPI_STATE_UNINITIALIZED;
-        }
-    }
-    else
-    {
-        /*
-         * Invalid configuration. Keep previous SPI state unchanged.
-         */
-    }
-
-    return;
-}
-
-/**
- * @copydoc SPI_end
- */
+/** @brief Disable a bus only when it is not inside a transaction. */
 void SPI_end(void)
 {
-    if (true == SPI_IsInitialized())
+    if (s_TransactionActive)
+    {
+        s_LastStatus = SPI_STATUS_BUSY;
+    }
+    else if (!s_Initialized)
+    {
+        s_LastStatus = SPI_STATUS_NOT_INIT;
+    }
+    else
     {
         LPSPI_Disable();
-        s_u8SpiInitialized = SPI_STATE_UNINITIALIZED;
+        s_Initialized = false;
+        s_LastStatus = SPI_STATUS_OK;
+    }
+}
+
+/** @brief Apply a device profile and reserve the current transaction. */
+SPI_Status_t SPI_beginTransaction(const SPI_Settings_t *settings)
+{
+    lpspi_settings_t driverSettings = {0U};
+    lpspi_status_t status = LPSPI_STATUS_ERROR;
+    SPI_Status_t result = SPI_STATUS_OK;
+
+    if (s_TransactionActive)
+    {
+        result = SPI_STATUS_BUSY;
+    }
+    else if (!s_Initialized)
+    {
+        result = SPI_STATUS_NOT_INIT;
+    }
+    else if (s_Role != SPI_ROLE_MASTER)
+    {
+        result = SPI_STATUS_UNSUPPORTED;
+    }
+    else if (!SPI_ValidSettings(settings))
+    {
+        result = SPI_STATUS_INVALID_ARG;
     }
     else
     {
-        /* SPI is already disabled from the Arduino layer point of view. */
+        driverSettings = SPI_ToDriverSettings(settings);
+        status = LPSPI_ApplySettings(&driverSettings);
+        result = SPI_FromDriverStatus(status);
+        if (result == SPI_STATUS_OK)
+        {
+            s_Settings = *settings;
+            s_TransactionActive = true;
+            s_TransactionError = SPI_STATUS_OK;
+        }
     }
+    s_LastStatus = result;
 
-    return;
+    return result;
 }
 
-/**
- * @copydoc SPI_setFrequency
- */
+/** @brief Wait for SPI hardware to finish while external CS remains asserted. */
+SPI_Status_t SPI_endTransaction(void)
+{
+    SPI_Status_t result = SPI_STATUS_NO_TRANSACTION;
+
+    if (s_TransactionActive)
+    {
+        result = s_TransactionError;
+        if (result == SPI_STATUS_OK)
+        {
+            result = SPI_FromDriverStatus(LPSPI_WaitIdle());
+        }
+        s_TransactionActive = false;
+        s_TransactionError = SPI_STATUS_OK;
+    }
+    s_LastStatus = result;
+
+    return result;
+}
+
+/** @brief Query whether another beginTransaction is allowed. */
+bool SPI_isTransactionActive(void)
+{
+    return s_TransactionActive;
+}
+
+/** @brief Get the latest wrapper status. */
+SPI_Status_t SPI_getLastStatus(void)
+{
+    return s_LastStatus;
+}
+
+/** @brief Get the current actual clock rate. */
+uint32_t SPI_getActualFrequency(void)
+{
+    uint32_t result = 0UL;
+
+    if (s_Initialized && (s_Role == SPI_ROLE_MASTER))
+    {
+        result = LPSPI_GetActualBaudRate();
+    }
+
+    return result;
+}
+
+/** @brief Update frequency when not inside an active transaction. */
 void SPI_setFrequency(uint32_t frequency)
 {
-    lpspi_status_t Status = LPSPI_STATUS_ERROR;
-
-    if ((true == SPI_IsInitialized()) &&
-        (SPI_ROLE_MASTER == s_SpiRole) &&
-        (0UL != frequency))
+    if (s_TransactionActive)
     {
-        Status = LPSPI_SetBaudRate(frequency);
-
-        if (LPSPI_STATUS_OK == Status)
-        {
-            s_u32SpiFrequency = frequency;
-        }
-        else
-        {
-            /*
-             * Keep previous frequency value when the low-level driver rejects
-             * the requested baudrate.
-             */
-        }
+        s_LastStatus = SPI_STATUS_BUSY;
+    }
+    else if (!s_Initialized)
+    {
+        s_LastStatus = SPI_STATUS_NOT_INIT;
+    }
+    else if ((s_Role != SPI_ROLE_MASTER) || (frequency == 0UL))
+    {
+        s_LastStatus = SPI_STATUS_INVALID_ARG;
     }
     else
     {
-        /*
-         * Frequency is only configurable in initialized master mode.
-         */
+        s_LastStatus = SPI_FromDriverStatus(LPSPI_SetBaudRate(frequency));
+        if (s_LastStatus == SPI_STATUS_OK)
+        {
+            s_Settings.frequency = frequency;
+        }
     }
-
-    return;
 }
 
-/**
- * @copydoc SPI_setDataMode
- */
+/** @brief Update clock mode when the bus is free. */
 void SPI_setDataMode(SPI_Mode_t mode)
 {
-    lpspi_status_t Status = LPSPI_STATUS_ERROR;
-
-    if ((true == SPI_IsInitialized()) && (true == SPI_IsValidMode(mode)))
+    if (s_TransactionActive)
     {
-        Status = LPSPI_SetMode(SPI_ToLpspiMode(mode));
-
-        if (LPSPI_STATUS_OK == Status)
-        {
-            s_SpiMode = mode;
-        }
-        else
-        {
-            /*
-             * Keep previous mode when the low-level driver rejects the request.
-             */
-        }
+        s_LastStatus = SPI_STATUS_BUSY;
+    }
+    else if (!s_Initialized)
+    {
+        s_LastStatus = SPI_STATUS_NOT_INIT;
+    }
+    else if (mode > SPI_MODE3)
+    {
+        s_LastStatus = SPI_STATUS_INVALID_ARG;
     }
     else
     {
-        /*
-         * SPI is not initialized or mode is invalid.
-         */
+        s_LastStatus = SPI_FromDriverStatus(LPSPI_SetMode((lpspi_clock_mode_t)mode));
+        if (s_LastStatus == SPI_STATUS_OK)
+        {
+            s_Settings.mode = mode;
+        }
     }
-
-    return;
 }
 
-/**
- * @copydoc SPI_setBitOrder
- */
+/** @brief Update bit order when the bus is free. */
 void SPI_setBitOrder(SPI_BitOrder_t bitOrder)
 {
-    lpspi_status_t Status = LPSPI_STATUS_ERROR;
-
-    if ((true == SPI_IsInitialized()) && (true == SPI_IsValidBitOrder(bitOrder)))
+    if (s_TransactionActive)
     {
-        Status = LPSPI_SetBitOrder(SPI_ToLpspiBitOrder(bitOrder));
-
-        if (LPSPI_STATUS_OK == Status)
-        {
-            s_SpiBitOrder = bitOrder;
-        }
-        else
-        {
-            /*
-             * Keep previous bit order when the low-level driver rejects the request.
-             */
-        }
+        s_LastStatus = SPI_STATUS_BUSY;
+    }
+    else if (!s_Initialized)
+    {
+        s_LastStatus = SPI_STATUS_NOT_INIT;
+    }
+    else if (bitOrder > SPI_LSBFIRST)
+    {
+        s_LastStatus = SPI_STATUS_INVALID_ARG;
     }
     else
     {
-        /*
-         * SPI is not initialized or bit order is invalid.
-         */
+        s_LastStatus = SPI_FromDriverStatus(LPSPI_SetBitOrder((lpspi_bit_order_t)bitOrder));
+        if (s_LastStatus == SPI_STATUS_OK)
+        {
+            s_Settings.bitOrder = bitOrder;
+        }
     }
-
-    return;
 }
 
-/**
- * @copydoc SPI_transfer
- */
+/** @brief Exchange one byte in the current bus settings. */
 uint8_t SPI_transfer(uint8_t data)
 {
-    uint8_t u8RxData = SPI_ERROR_VALUE_8;
-    lpspi_status_t Status = LPSPI_STATUS_ERROR;
+    uint8_t result = 0U;
 
-    if (true == SPI_IsInitialized())
+    if (!s_Initialized)
     {
-        Status = LPSPI_Transfer8(data, &u8RxData);
-
-        if (LPSPI_STATUS_OK != Status)
-        {
-            u8RxData = SPI_ERROR_VALUE_8;
-        }
-        else
-        {
-            /* u8RxData already contains the received byte. */
-        }
+        s_LastStatus = SPI_STATUS_NOT_INIT;
     }
     else
     {
-        u8RxData = SPI_ERROR_VALUE_8;
+        s_LastStatus = SPI_FromDriverStatus(LPSPI_Transfer8(data, &result));
+        SPI_RecordTransferStatus(s_LastStatus);
+        if (s_LastStatus != SPI_STATUS_OK)
+        {
+            result = 0U;
+        }
     }
 
-    return u8RxData;
+    return result;
 }
 
-/**
- * @copydoc SPI_transfer16
- */
+/** @brief Exchange one 16-bit word in the current bus settings. */
 uint16_t SPI_transfer16(uint16_t data)
 {
-    uint16_t u16RxData = SPI_ERROR_VALUE_16;
-    lpspi_status_t Status = LPSPI_STATUS_ERROR;
+    uint16_t result = 0U;
 
-    if (true == SPI_IsInitialized())
+    if (!s_Initialized)
     {
-        Status = LPSPI_Transfer16(data, &u16RxData);
-
-        if (LPSPI_STATUS_OK != Status)
-        {
-            u16RxData = SPI_ERROR_VALUE_16;
-        }
-        else
-        {
-            /* u16RxData already contains the received frame. */
-        }
+        s_LastStatus = SPI_STATUS_NOT_INIT;
     }
     else
     {
-        u16RxData = SPI_ERROR_VALUE_16;
+        s_LastStatus = SPI_FromDriverStatus(LPSPI_Transfer16(data, &result));
+        SPI_RecordTransferStatus(s_LastStatus);
+        if (s_LastStatus != SPI_STATUS_OK)
+        {
+            result = 0U;
+        }
     }
 
-    return u16RxData;
+    return result;
 }
 
-/**
- * @copydoc SPI_transferBuffer
- */
-void SPI_transferBuffer(const uint8_t *txBuffer,
-                        uint8_t *rxBuffer,
-                        uint32_t length)
+/** @brief Exchange byte arrays; null TX means transmit 0xFF dummy data. */
+void SPI_transferBuffer(const uint8_t *txBuffer, uint8_t *rxBuffer, uint32_t length)
 {
-    if (true == SPI_IsInitialized())
+    if (!s_Initialized)
     {
-        (void)LPSPI_TransferBuffer(txBuffer, rxBuffer, length);
+        s_LastStatus = SPI_STATUS_NOT_INIT;
     }
     else
     {
-        /*
-         * SPI is not initialized. Keep Arduino-style behavior: do nothing.
-         */
+        s_LastStatus = SPI_FromDriverStatus(LPSPI_TransferBuffer(txBuffer, rxBuffer, length));
+        SPI_RecordTransferStatus(s_LastStatus);
     }
-
-    return;
 }
 
-/**
- * @copydoc SPI_available
- */
+/** @brief Read FIFO readiness, normally false after blocking master calls. */
 bool SPI_available(void)
 {
-    bool bAvailable = false;
+    bool result = false;
 
-    if (true == SPI_IsInitialized())
+    if (s_Initialized)
     {
-        bAvailable = LPSPI_IsRxReady();
-    }
-    else
-    {
-        bAvailable = false;
+        result = LPSPI_IsRxReady();
     }
 
-    return bAvailable;
+    return result;
 }
 
-/**
- * @copydoc SPI_read
- */
+/** @brief Receive a byte with dummy transmit clock in master mode. */
 uint8_t SPI_read(void)
 {
-    uint8_t u8RxData = SPI_ERROR_VALUE_8;
-    lpspi_status_t Status = LPSPI_STATUS_ERROR;
+    uint8_t result = 0U;
 
-    if (true == SPI_IsInitialized())
+    if (!s_Initialized)
     {
-        Status = LPSPI_Read8(&u8RxData);
-
-        if (LPSPI_STATUS_OK != Status)
-        {
-            u8RxData = SPI_ERROR_VALUE_8;
-        }
-        else
-        {
-            /* u8RxData already contains the received byte. */
-        }
+        s_LastStatus = SPI_STATUS_NOT_INIT;
     }
     else
     {
-        u8RxData = SPI_ERROR_VALUE_8;
+        s_LastStatus = SPI_FromDriverStatus(LPSPI_Read8(&result));
+        SPI_RecordTransferStatus(s_LastStatus);
+        if (s_LastStatus != SPI_STATUS_OK)
+        {
+            result = 0U;
+        }
     }
 
-    return u8RxData;
+    return result;
 }
 
-/**
- * @copydoc SPI_read16
- */
+/** @brief Receive a 16-bit frame using dummy transmit data in master mode. */
 uint16_t SPI_read16(void)
 {
-    uint16_t u16RxData = SPI_ERROR_VALUE_16;
-    lpspi_status_t Status = LPSPI_STATUS_ERROR;
+    uint16_t result = 0U;
 
-    if (true == SPI_IsInitialized())
+    if (!s_Initialized)
     {
-        Status = LPSPI_Read16(&u16RxData);
-
-        if (LPSPI_STATUS_OK != Status)
-        {
-            u16RxData = SPI_ERROR_VALUE_16;
-        }
-        else
-        {
-            /* u16RxData already contains the received frame. */
-        }
+        s_LastStatus = SPI_STATUS_NOT_INIT;
     }
     else
     {
-        u16RxData = SPI_ERROR_VALUE_16;
+        s_LastStatus = SPI_FromDriverStatus(LPSPI_Read16(&result));
+        SPI_RecordTransferStatus(s_LastStatus);
+        if (s_LastStatus != SPI_STATUS_OK)
+        {
+            result = 0U;
+        }
     }
 
-    return u16RxData;
+    return result;
 }
 
-/**
- * @copydoc SPI_write
- */
+/** @brief Transmit a byte; discard the simultaneous received byte. */
 void SPI_write(uint8_t data)
 {
-    if (true == SPI_IsInitialized())
+    if (!s_Initialized)
     {
-        (void)LPSPI_Write8(data);
+        s_LastStatus = SPI_STATUS_NOT_INIT;
     }
     else
     {
-        /*
-         * SPI is not initialized. Keep Arduino-style behavior: do nothing.
-         */
+        s_LastStatus = SPI_FromDriverStatus(LPSPI_Write8(data));
+        SPI_RecordTransferStatus(s_LastStatus);
     }
-
-    return;
 }
 
-/**
- * @copydoc SPI_write16
- */
+/** @brief Transmit a 16-bit frame; discard received data. */
 void SPI_write16(uint16_t data)
 {
-    if (true == SPI_IsInitialized())
+    if (!s_Initialized)
     {
-        (void)LPSPI_Write16(data);
+        s_LastStatus = SPI_STATUS_NOT_INIT;
     }
     else
     {
-        /*
-         * SPI is not initialized. Keep Arduino-style behavior: do nothing.
-         */
+        s_LastStatus = SPI_FromDriverStatus(LPSPI_Write16(data));
+        SPI_RecordTransferStatus(s_LastStatus);
     }
-
-    return;
 }
 
-/**
- * @copydoc SPI_getRole
- */
+/** @brief Return the most recently initialized SPI role. */
 SPI_Role_t SPI_getRole(void)
 {
-    return s_SpiRole;
+    return s_Role;
 }
