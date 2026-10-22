@@ -9,6 +9,8 @@
 
 #include "lcd_tft.h"
 #include "Arduino.h"
+#include "arduino_pins.h"
+#include "spi.h"
 
 #include <stddef.h>
 
@@ -31,7 +33,7 @@
  * ST7789 Configuration
  * ============================================================ */
 
-#define ST7789_SPI_FREQUENCY (15000000UL)
+#define ST7789_SPI_FREQUENCY (ST7789_DEFAULT_SPI_FREQUENCY)
 
 #define ST7789_RESET_HIGH_DELAY_MS (10U)
 #define ST7789_RESET_LOW_DELAY_MS (20U)
@@ -188,34 +190,126 @@ static const uint8_t g_font5x7[95][5] =
  * Private ST7789 Helpers
  * ============================================================ */
 
-static void ST7789_WriteCommand(
-    ST7789_t *tft,
-    uint8_t command)
+/* SPI is shared. A device must NOT reinitialize or disable the bus. */
+static SPI_Settings_t ST7789_GetSettings(const ST7789_t *tft)
 {
+    SPI_Settings_t settings = {SPI_MODE0, SPI_MSBFIRST, SPI_FRAME_SIZE_8, 0UL};
+
     if (tft != NULL)
     {
-        digitalWrite(tft->dcPin, LOW);
-        digitalWrite(tft->csPin, LOW);
-
-        SPI_write(command);
-
-        digitalWrite(tft->csPin, HIGH);
+        settings.frequency = tft->spiFrequency;
     }
+    return settings;
 }
 
-static void ST7789_WriteData8(
-    ST7789_t *tft,
-    uint8_t data)
+/** @brief Begin an atomic ST7789 command/data exchange. */
+static bool ST7789_Select(ST7789_t *tft)
 {
+    bool ok = false;
+    SPI_Status_t status = SPI_STATUS_INVALID_ARG;
+
+    if ((tft != NULL) && (true == tft->initialized))
+    {
+        SPI_Settings_t settings = ST7789_GetSettings(tft);
+        status = SPI_beginTransaction(&settings);
+        tft->lastSpiStatus = status;
+        if (SPI_STATUS_OK == status)
+        {
+            digitalWrite(tft->csPin, LOW);
+            ok = true;
+        }
+    }
+    return ok;
+}
+
+/** @brief Finish SPI BEFORE releasing CS, including in failure cases. */
+static bool ST7789_Deselect(ST7789_t *tft)
+{
+    bool ok = false;
+
     if (tft != NULL)
     {
-        digitalWrite(tft->dcPin, HIGH);
-        digitalWrite(tft->csPin, LOW);
-
-        SPI_write(data);
-
+        SPI_Status_t status = SPI_endTransaction();
         digitalWrite(tft->csPin, HIGH);
+        tft->lastSpiStatus = status;
+        ok = (SPI_STATUS_OK == status);
     }
+    return ok;
+}
+
+/** @brief Send a command or payload byte without changing transaction state. */
+static bool ST7789_SendByte(ST7789_t *tft, uint8_t data, bool isData)
+{
+    bool ok = false;
+
+    if (tft != NULL)
+    {
+        digitalWrite(tft->dcPin, (isData == true) ? HIGH : LOW);
+        SPI_write(data);
+        tft->lastSpiStatus = SPI_getLastStatus();
+        ok = (SPI_STATUS_OK == tft->lastSpiStatus);
+    }
+    return ok;
+}
+
+/** @brief Keep CS asserted for a command and its entire parameter block. */
+static bool ST7789_WriteCommandData(ST7789_t *tft, uint8_t command,
+                                    const uint8_t *data, uint8_t length)
+{
+    bool ok = false;
+    uint8_t i = 0U;
+
+    if ((tft != NULL) && ((0U == length) || (data != NULL)) &&
+        (true == ST7789_Select(tft)))
+    {
+        ok = ST7789_SendByte(tft, command, false);
+        while ((true == ok) && (i < length))
+        {
+            ok = ST7789_SendByte(tft, data[i], true);
+            i++;
+        }
+        if (false == ST7789_Deselect(tft))
+        {
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+/** @brief Issue CASET + RASET + RAMWR while one transaction is ACTIVE. */
+static bool ST7789_SetAddressWindowRaw(ST7789_t *tft,
+                                       uint16_t x0, uint16_t y0,
+                                       uint16_t x1, uint16_t y1)
+{
+    bool ok = false;
+    uint16_t xa = (uint16_t)(x0 + tft->xOffset);
+    uint16_t xb = (uint16_t)(x1 + tft->xOffset);
+    uint16_t ya = (uint16_t)(y0 + tft->yOffset);
+    uint16_t yb = (uint16_t)(y1 + tft->yOffset);
+    uint8_t col[4] = {(uint8_t)(xa >> 8U), (uint8_t)xa,
+                      (uint8_t)(xb >> 8U), (uint8_t)xb};
+    uint8_t row[4] = {(uint8_t)(ya >> 8U), (uint8_t)ya,
+                      (uint8_t)(yb >> 8U), (uint8_t)yb};
+    uint8_t i = 0U;
+
+    ok = ST7789_SendByte(tft, ST7789_CMD_CASET, false);
+    for (i = 0U; (true == ok) && (i < 4U); i++)
+    {
+        ok = ST7789_SendByte(tft, col[i], true);
+    }
+    if (true == ok)
+    {
+        ok = ST7789_SendByte(tft, ST7789_CMD_RASET, false);
+    }
+    for (i = 0U; (true == ok) && (i < 4U); i++)
+    {
+        ok = ST7789_SendByte(tft, row[i], true);
+    }
+    if (true == ok)
+    {
+        ok = ST7789_SendByte(tft, ST7789_CMD_RAMWR, false);
+    }
+    return ok;
 }
 
 static void ST7789_HardwareReset(ST7789_t *tft)
@@ -313,255 +407,267 @@ static void ST7789_DrawFastVerticalLine(
  * Advanced ST7789 Implementation
  * ============================================================ */
 
-void ST7789_Init(
-    ST7789_t *tft,
-    uint8_t csPin,
-    uint8_t dcPin,
-    uint8_t rstPin,
-    uint16_t width,
-    uint16_t height,
-    uint16_t xOffset,
-    uint16_t yOffset)
+/** @brief Reject invalid or conflicting logical GPIO choices. */
+static bool ST7789_ValidConfig(const ST7789_Config_t *config)
 {
-    if ((tft != NULL) &&
-        (0U < width) &&
-        (0U < height))
+    bool ok = false;
+
+    if (config != NULL)
     {
-        tft->csPin = csPin;
-        tft->dcPin = dcPin;
-        tft->rstPin = rstPin;
-
-        tft->width = width;
-        tft->height = height;
-
-        tft->xOffset = xOffset;
-        tft->yOffset = yOffset;
-
-        tft->cursorX = 0U;
-        tft->cursorY = 0U;
-
-        tft->textColor = ST7789_COLOR_WHITE;
-        tft->textBackground = ST7789_COLOR_BLACK;
-        tft->textSize = TFT_DEFAULT_TEXT_SIZE;
-
-        pinMode(tft->csPin, OUTPUT);
-        pinMode(tft->dcPin, OUTPUT);
-        pinMode(tft->rstPin, OUTPUT);
-
-        digitalWrite(tft->csPin, HIGH);
-        digitalWrite(tft->dcPin, HIGH);
-
-        SPI_beginEx(
-            SPI_ROLE_MASTER,
-            ST7789_SPI_FREQUENCY,
-            SPI_MODE0,
-            SPI_MSBFIRST);
-
-        ST7789_HardwareReset(tft);
-
-        ST7789_WriteCommand(
-            tft,
-            ST7789_CMD_SWRESET);
-
-        delay(ST7789_SWRESET_DELAY_MS);
-
-        ST7789_WriteCommand(
-            tft,
-            ST7789_CMD_SLPOUT);
-
-        delay(ST7789_SLPOUT_DELAY_MS);
-
-        ST7789_WriteCommand(
-            tft,
-            ST7789_CMD_COLMOD);
-
-        ST7789_WriteData8(
-            tft,
-            0x55U);
-
-        ST7789_WriteCommand(
-            tft,
-            ST7789_CMD_MADCTL);
-
-        ST7789_WriteData8(
-            tft,
-            0x00U);
-
-        ST7789_WriteCommand(
-            tft,
-            ST7789_CMD_INVON);
-
-        delay(ST7789_NORMAL_DELAY_MS);
-
-        ST7789_WriteCommand(
-            tft,
-            ST7789_CMD_NORON);
-
-        delay(ST7789_NORMAL_DELAY_MS);
-
-        ST7789_WriteCommand(
-            tft,
-            ST7789_CMD_DISPON);
-
-        delay(ST7789_DISPON_DELAY_MS);
-
-        ST7789_FillScreen(
-            tft,
-            ST7789_COLOR_BLACK);
+        ok = (ARDUINO_VALID_TRUE == Arduino_HasDigitalCapability(config->csPin)) &&
+             (ARDUINO_VALID_TRUE == Arduino_HasDigitalCapability(config->dcPin)) &&
+             (ARDUINO_VALID_TRUE == Arduino_HasDigitalCapability(config->rstPin)) &&
+             (config->csPin != config->dcPin) &&
+             (config->csPin != config->rstPin) &&
+             (config->dcPin != config->rstPin) &&
+             (config->width != 0U) && (config->height != 0U) &&
+             (((uint32_t)config->width + (uint32_t)config->xOffset) <= 65536UL) &&
+             (((uint32_t)config->height + (uint32_t)config->yOffset) <= 65536UL) &&
+             (config->spiFrequency >= 100000UL) &&
+             (config->spiFrequency <= 10000000UL);
+        if ((true == ok) && (config->backlightPin != ST7789_PIN_NONE))
+        {
+            ok = (ARDUINO_VALID_TRUE == Arduino_HasDigitalCapability(config->backlightPin)) &&
+                 (config->backlightPin != config->csPin) &&
+                 (config->backlightPin != config->dcPin) &&
+                 (config->backlightPin != config->rstPin);
+        }
     }
+    return ok;
 }
 
-void ST7789_SetAddressWindow(
-    ST7789_t *tft,
-    uint16_t x0,
-    uint16_t y0,
-    uint16_t x1,
-    uint16_t y1)
+bool ST7789_Begin(ST7789_t *tft, const ST7789_Config_t *config)
 {
-    uint16_t xStart = 0U;
-    uint16_t xEnd = 0U;
-    uint16_t yStart = 0U;
-    uint16_t yEnd = 0U;
+    bool ok = false;
+    SPI_Settings_t settings = {SPI_MODE0, SPI_MSBFIRST, SPI_FRAME_SIZE_8, 0UL};
+    SPI_Status_t status = SPI_STATUS_INVALID_ARG;
+    uint8_t colorMode = 0x55U; /* RGB565, 16 bits/pixel */
+    uint8_t memoryControl = 0x00U;
 
     if (tft != NULL)
     {
-        xStart = x0 + tft->xOffset;
-        xEnd = x1 + tft->xOffset;
-
-        yStart = y0 + tft->yOffset;
-        yEnd = y1 + tft->yOffset;
-
-        ST7789_WriteCommand(
-            tft,
-            ST7789_CMD_CASET);
-
-        ST7789_WriteData8(
-            tft,
-            (uint8_t)(xStart >> 8U));
-
-        ST7789_WriteData8(
-            tft,
-            (uint8_t)(xStart & 0xFFU));
-
-        ST7789_WriteData8(
-            tft,
-            (uint8_t)(xEnd >> 8U));
-
-        ST7789_WriteData8(
-            tft,
-            (uint8_t)(xEnd & 0xFFU));
-
-        ST7789_WriteCommand(
-            tft,
-            ST7789_CMD_RASET);
-
-        ST7789_WriteData8(
-            tft,
-            (uint8_t)(yStart >> 8U));
-
-        ST7789_WriteData8(
-            tft,
-            (uint8_t)(yStart & 0xFFU));
-
-        ST7789_WriteData8(
-            tft,
-            (uint8_t)(yEnd >> 8U));
-
-        ST7789_WriteData8(
-            tft,
-            (uint8_t)(yEnd & 0xFFU));
-
-        ST7789_WriteCommand(
-            tft,
-            ST7789_CMD_RAMWR);
+        /* Initialize only new fields; preserve no stale 'initialized' value. */
+        tft->initialized = false;
+        tft->lastSpiStatus = SPI_STATUS_INVALID_ARG;
     }
-}
-
-void ST7789_DrawPixel(
-    ST7789_t *tft,
-    uint16_t x,
-    uint16_t y,
-    uint16_t color)
-{
-    if ((tft != NULL) &&
-        (x < tft->width) &&
-        (y < tft->height))
+    if ((tft != NULL) && (true == ST7789_ValidConfig(config)))
     {
-        ST7789_SetAddressWindow(
-            tft,
-            x,
-            y,
-            x,
-            y);
-
-        digitalWrite(tft->dcPin, HIGH);
-        digitalWrite(tft->csPin, LOW);
-
-        SPI_write16(color);
-
-        digitalWrite(tft->csPin, HIGH);
-    }
-}
-
-void ST7789_FillRect(
-    ST7789_t *tft,
-    uint16_t x,
-    uint16_t y,
-    uint16_t width,
-    uint16_t height,
-    uint16_t color)
-{
-    uint16_t clippedWidth = width;
-    uint16_t clippedHeight = height;
-
-    uint32_t totalPixels = 0UL;
-    uint32_t i = 0UL;
-
-    if ((tft != NULL) &&
-        (x < tft->width) &&
-        (y < tft->height) &&
-        (0U < width) &&
-        (0U < height))
-    {
-        if (((uint32_t)x + (uint32_t)clippedWidth) >
-            (uint32_t)tft->width)
+        settings.frequency = config->spiFrequency;
+        /* Check master bus availability BEFORE touching the device GPIOs. */
+        status = SPI_beginTransaction(&settings);
+        if (SPI_STATUS_OK == status)
         {
-            clippedWidth =
-                (uint16_t)(tft->width - x);
+            status = SPI_endTransaction();
         }
-
-        if (((uint32_t)y + (uint32_t)clippedHeight) >
-            (uint32_t)tft->height)
+        tft->lastSpiStatus = status;
+        if (SPI_STATUS_OK == status)
         {
-            clippedHeight =
-                (uint16_t)(tft->height - y);
-        }
+            tft->csPin = config->csPin;
+            tft->dcPin = config->dcPin;
+            tft->rstPin = config->rstPin;
+            tft->backlightPin = config->backlightPin;
+            tft->width = config->width;
+            tft->height = config->height;
+            tft->xOffset = config->xOffset;
+            tft->yOffset = config->yOffset;
+            tft->spiFrequency = config->spiFrequency;
+            tft->cursorX = 0U;
+            tft->cursorY = 0U;
+            tft->textColor = ST7789_COLOR_WHITE;
+            tft->textBackground = ST7789_COLOR_BLACK;
+            tft->textSize = TFT_DEFAULT_TEXT_SIZE;
 
-        if ((0U < clippedWidth) &&
-            (0U < clippedHeight))
-        {
-            ST7789_SetAddressWindow(
-                tft,
-                x,
-                y,
-                (uint16_t)(x + clippedWidth - 1U),
-                (uint16_t)(y + clippedHeight - 1U));
-
+            /* Initialize outputs and leave CS HIGH outside SPI transactions. */
+            digitalWrite(tft->csPin, HIGH);
+            pinMode(tft->csPin, OUTPUT);
+            digitalWrite(tft->csPin, HIGH);
+            pinMode(tft->dcPin, OUTPUT);
             digitalWrite(tft->dcPin, HIGH);
-            digitalWrite(tft->csPin, LOW);
-
-            totalPixels =
-                (uint32_t)clippedWidth *
-                (uint32_t)clippedHeight;
-
-            for (i = 0UL;
-                 i < totalPixels;
-                 i++)
+            pinMode(tft->rstPin, OUTPUT);
+            if (tft->backlightPin != ST7789_PIN_NONE)
             {
-                SPI_write16(color);
+                pinMode(tft->backlightPin, OUTPUT);
+                digitalWrite(tft->backlightPin, LOW);
             }
 
-            digitalWrite(tft->csPin, HIGH);
+            tft->initialized = true; /* Permit commands during setup. */
+            ST7789_HardwareReset(tft);
+            ok = ST7789_WriteCommandData(tft, ST7789_CMD_SWRESET, NULL, 0U);
+            if (true == ok)
+            {
+                delay(ST7789_SWRESET_DELAY_MS);
+                ok = ST7789_WriteCommandData(tft, ST7789_CMD_SLPOUT, NULL, 0U);
+            }
+            if (true == ok)
+            {
+                delay(ST7789_SLPOUT_DELAY_MS);
+                ok = ST7789_WriteCommandData(tft, ST7789_CMD_COLMOD, &colorMode, 1U);
+            }
+            if (true == ok)
+            {
+                ok = ST7789_WriteCommandData(tft, ST7789_CMD_MADCTL, &memoryControl, 1U);
+            }
+            if (true == ok)
+            {
+                ok = ST7789_WriteCommandData(tft, ST7789_CMD_INVON, NULL, 0U);
+            }
+            if (true == ok)
+            {
+                delay(ST7789_NORMAL_DELAY_MS);
+                ok = ST7789_WriteCommandData(tft, ST7789_CMD_NORON, NULL, 0U);
+            }
+            if (true == ok)
+            {
+                delay(ST7789_NORMAL_DELAY_MS);
+                ok = ST7789_WriteCommandData(tft, ST7789_CMD_DISPON, NULL, 0U);
+            }
+            if (true == ok)
+            {
+                delay(ST7789_DISPON_DELAY_MS);
+                ST7789_FillScreen(tft, ST7789_COLOR_BLACK);
+                ok = (SPI_STATUS_OK == tft->lastSpiStatus);
+            }
+            tft->initialized = ok;
+            if ((true == ok) && (tft->backlightPin != ST7789_PIN_NONE))
+            {
+                digitalWrite(tft->backlightPin, HIGH);
+            }
+        }
+    }
+    return ok;
+}
+
+/** @brief Retain the original advanced constructor for source compatibility. */
+void ST7789_Init(ST7789_t *tft,
+                 uint8_t csPin, uint8_t dcPin, uint8_t rstPin,
+                 uint16_t width, uint16_t height,
+                 uint16_t xOffset, uint16_t yOffset)
+{
+    const ST7789_Config_t config = {
+        csPin, dcPin, rstPin, ST7789_PIN_NONE, width, height,
+        xOffset, yOffset, ST7789_SPI_FREQUENCY};
+    (void)ST7789_Begin(tft, &config);
+}
+
+bool ST7789_IsInitialized(const ST7789_t *tft)
+{
+    return ((tft != NULL) && (true == tft->initialized));
+}
+
+SPI_Status_t ST7789_GetLastSpiStatus(const ST7789_t *tft)
+{
+    SPI_Status_t status = SPI_STATUS_INVALID_ARG;
+    if (tft != NULL)
+    {
+        status = tft->lastSpiStatus;
+    }
+    return status;
+}
+
+void ST7789_SetBacklight(ST7789_t *tft, bool enabled)
+{
+    if ((tft != NULL) && (true == tft->initialized) &&
+        (ST7789_PIN_NONE != tft->backlightPin))
+    {
+        digitalWrite(tft->backlightPin, (true == enabled) ? HIGH : LOW);
+    }
+}
+
+void ST7789_SetAddressWindow(ST7789_t *tft,
+                             uint16_t x0, uint16_t y0,
+                             uint16_t x1, uint16_t y1)
+{
+    bool ok = false;
+
+    if ((tft != NULL) && (true == tft->initialized) &&
+        (x0 <= x1) && (y0 <= y1) &&
+        (x1 < tft->width) && (y1 < tft->height) &&
+        (true == ST7789_Select(tft)))
+    {
+        ok = ST7789_SetAddressWindowRaw(tft, x0, y0, x1, y1);
+        if (false == ST7789_Deselect(tft))
+        {
+            ok = false;
+        }
+        (void)ok;
+    }
+}
+
+void ST7789_DrawPixel(ST7789_t *tft, uint16_t x, uint16_t y, uint16_t color)
+{
+    bool ok = false;
+
+    if ((tft != NULL) && (true == tft->initialized) &&
+        (x < tft->width) && (y < tft->height) &&
+        (true == ST7789_Select(tft)))
+    {
+        ok = ST7789_SetAddressWindowRaw(tft, x, y, x, y);
+        if (true == ok)
+        {
+            ok = ST7789_SendByte(tft, (uint8_t)(color >> 8U), true);
+        }
+        if (true == ok)
+        {
+            ok = ST7789_SendByte(tft, (uint8_t)color, true);
+        }
+        if (false == ST7789_Deselect(tft))
+        {
+            ok = false;
+        }
+        (void)ok;
+    }
+}
+
+void ST7789_FillRect(ST7789_t *tft, uint16_t x, uint16_t y,
+                     uint16_t width, uint16_t height, uint16_t color)
+{
+    bool ok = false;
+    uint16_t clippedWidth = width;
+    uint16_t clippedHeight = height;
+    uint32_t totalPixels = 0UL;
+    uint32_t remaining = 0UL;
+    uint32_t pixelsPerChunk = 0UL;
+    uint8_t block[64]; /* 32 RGB565 pixels, no framebuffer or malloc. */
+    uint8_t i = 0U;
+
+    if ((tft != NULL) && (true == tft->initialized) &&
+        (x < tft->width) && (y < tft->height) &&
+        (0U < width) && (0U < height))
+    {
+        if (((uint32_t)x + (uint32_t)clippedWidth) > (uint32_t)tft->width)
+        {
+            clippedWidth = (uint16_t)(tft->width - x);
+        }
+        if (((uint32_t)y + (uint32_t)clippedHeight) > (uint32_t)tft->height)
+        {
+            clippedHeight = (uint16_t)(tft->height - y);
+        }
+        for (i = 0U; i < 64U; i += 2U)
+        {
+            block[i] = (uint8_t)(color >> 8U);
+            block[(uint8_t)(i + 1U)] = (uint8_t)color;
+        }
+        if (true == ST7789_Select(tft))
+        {
+            ok = ST7789_SetAddressWindowRaw(tft, x, y,
+                                            (uint16_t)(x + clippedWidth - 1U),
+                                            (uint16_t)(y + clippedHeight - 1U));
+            totalPixels = (uint32_t)clippedWidth * (uint32_t)clippedHeight;
+            remaining = totalPixels;
+            digitalWrite(tft->dcPin, HIGH);
+            while ((true == ok) && (remaining > 0UL))
+            {
+                pixelsPerChunk = (remaining > 32UL) ? 32UL : remaining;
+                SPI_transferBuffer(block, NULL, pixelsPerChunk * 2UL);
+                tft->lastSpiStatus = SPI_getLastStatus();
+                ok = (SPI_STATUS_OK == tft->lastSpiStatus);
+                remaining -= pixelsPerChunk;
+            }
+            if (false == ST7789_Deselect(tft))
+            {
+                ok = false;
+            }
+            (void)ok;
         }
     }
 }
@@ -1176,43 +1282,25 @@ static void TFT_PrintUnsignedInternal(uint32_t value)
  * Beginner API Implementation
  * ============================================================ */
 
+bool TFT_BeginWithPins(uint8_t csPin, uint8_t dcPin,
+                       uint8_t rstPin, uint8_t backlightPin)
+{
+    ST7789_Config_t config = {
+        csPin, dcPin, rstPin, backlightPin,
+        TFT_DEFAULT_WIDTH, TFT_DEFAULT_HEIGHT,
+        TFT_DEFAULT_X_OFFSET, TFT_DEFAULT_Y_OFFSET,
+        ST7789_SPI_FREQUENCY};
+
+    g_tftInitialized = ST7789_Begin(&g_tftDefault, &config);
+    return g_tftInitialized;
+}
+
 bool TFT_Begin(void)
 {
-    g_tftInitialized = false;
-
-    pinMode(
-        TFT_DEFAULT_BACKLIGHT_PIN,
-        OUTPUT);
-
-    digitalWrite(
-        TFT_DEFAULT_BACKLIGHT_PIN,
-        HIGH);
-
-    ST7789_Init(
-        &g_tftDefault,
-        TFT_DEFAULT_CS_PIN,
-        TFT_DEFAULT_DC_PIN,
-        TFT_DEFAULT_RST_PIN,
-        TFT_DEFAULT_WIDTH,
-        TFT_DEFAULT_HEIGHT,
-        TFT_DEFAULT_X_OFFSET,
-        TFT_DEFAULT_Y_OFFSET);
-
-    g_tftDefault.cursorX = 0U;
-    g_tftDefault.cursorY = 0U;
-
-    g_tftDefault.textColor =
-        TFT_WHITE;
-
-    g_tftDefault.textBackground =
-        TFT_BLACK;
-
-    g_tftDefault.textSize =
-        TFT_DEFAULT_TEXT_SIZE;
-
-    g_tftInitialized = true;
-
-    return g_tftInitialized;
+    return TFT_BeginWithPins(TFT_DEFAULT_CS_PIN,
+                             TFT_DEFAULT_DC_PIN,
+                             TFT_DEFAULT_RST_PIN,
+                             TFT_DEFAULT_BACKLIGHT_PIN);
 }
 
 bool TFT_IsInitialized(void)
@@ -1220,24 +1308,19 @@ bool TFT_IsInitialized(void)
     return g_tftInitialized;
 }
 
+SPI_Status_t TFT_GetLastSpiStatus(void)
+{
+    return ST7789_GetLastSpiStatus(&g_tftDefault);
+}
+
 void TFT_BacklightOn(void)
 {
-    if (true == g_tftInitialized)
-    {
-        digitalWrite(
-            TFT_DEFAULT_BACKLIGHT_PIN,
-            HIGH);
-    }
+    ST7789_SetBacklight(&g_tftDefault, true);
 }
 
 void TFT_BacklightOff(void)
 {
-    if (true == g_tftInitialized)
-    {
-        digitalWrite(
-            TFT_DEFAULT_BACKLIGHT_PIN,
-            LOW);
-    }
+    ST7789_SetBacklight(&g_tftDefault, false);
 }
 
 void TFT_FillScreen(uint16_t color)

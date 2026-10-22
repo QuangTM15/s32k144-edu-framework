@@ -23,6 +23,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "spi.h"
 
 /* ============================================================
  * RGB565 Color Definitions
@@ -49,6 +50,30 @@
 #define TFT_CYAN ST7789_COLOR_CYAN
 #define TFT_MAGENTA ST7789_COLOR_MAGENTA
 
+/** @brief Backlight pin omitted (e.g. permanently powered backlight). */
+#define ST7789_PIN_NONE (0xFFU)
+
+/** @brief Default clock: 8 MHz; LPSPI0 master limit is 10 MHz in current clock setup. */
+#define ST7789_DEFAULT_SPI_FREQUENCY (8000000UL)
+
+/**
+ * @brief Hardware and panel configuration for one display.
+ * @details The SPI bus must already be initialized as master by the application.
+ * The driver owns CS/DC/RST/backlight GPIOs, but never initializes/ends SPI.
+ */
+typedef struct
+{
+    uint8_t csPin;
+    uint8_t dcPin;
+    uint8_t rstPin;
+    uint8_t backlightPin; /**< ST7789_PIN_NONE to omit backlight control. */
+    uint16_t width;
+    uint16_t height;
+    uint16_t xOffset;
+    uint16_t yOffset;
+    uint32_t spiFrequency;
+} ST7789_Config_t;
+
 /* ============================================================
  * Advanced Device Context
  * ============================================================ */
@@ -63,9 +88,13 @@
  */
 typedef struct
 {
-    uint8_t csPin;  /**< Chip Select logical pin. */
-    uint8_t dcPin;  /**< Data/Command logical pin. */
-    uint8_t rstPin; /**< Hardware Reset logical pin. */
+    uint8_t csPin;              /**< Chip Select logical pin. */
+    uint8_t dcPin;              /**< Data/Command logical pin. */
+    uint8_t rstPin;             /**< Hardware Reset logical pin. */
+    uint8_t backlightPin;       /**< Optional backlight GPIO (ST7789_PIN_NONE allowed). */
+    uint32_t spiFrequency;      /**< Per-device SPI clock target in Hz. */
+    SPI_Status_t lastSpiStatus; /**< Last SPI transaction result. */
+    bool initialized;           /**< Initialization completed at SPI level; not panel ACK. */
 
     uint16_t width;  /**< Logical display width in pixels. */
     uint16_t height; /**< Logical display height in pixels. */
@@ -100,7 +129,8 @@ typedef struct
  * - X offset: 0
  * - Y offset: 20
  *
- * SPI and display initialization are performed automatically.
+ * Call SPI_begin(SPI_ROLE_MASTER) once in application code BEFORE TFT_Begin().
+ * Device initialization never reinitializes the shared SPI bus.
  *
  * @return true when the default display context is initialized.
  *
@@ -110,6 +140,19 @@ typedef struct
  * an acknowledgement.
  */
 bool TFT_Begin(void);
+
+/**
+ * @brief Initialize the default 240x280 panel with user-chosen control pins.
+ * @details Other settings (offsets and SPI clock) remain the TFT defaults.
+ * Requires an already initialized SPI master bus.
+ * @return true when the SPI command sequence completed successfully.
+ *         Write-only displays do not acknowledge initialization.
+ */
+bool TFT_BeginWithPins(uint8_t csPin, uint8_t dcPin,
+                       uint8_t rstPin, uint8_t backlightPin);
+
+/** @brief Most recent SPI status for the default TFT (not panel presence). */
+SPI_Status_t TFT_GetLastSpiStatus(void);
 
 /**
  * @brief Check whether the beginner TFT API has been initialized.
@@ -385,6 +428,23 @@ uint16_t TFT_Height(void);
  * ============================================================ */
 
 /**
+ * @brief Initialize one display with an explicit configuration.
+ * @details Does not call SPI_begin()/SPI_end(). CS stays inactive outside
+ * transactions; a command and all of its data share one transaction.
+ * @return true if all SPI operations completed; NOT proof of panel presence.
+ */
+bool ST7789_Begin(ST7789_t *tft, const ST7789_Config_t *config);
+
+/** @brief Check whether the display initialization sequence was sent. */
+bool ST7789_IsInitialized(const ST7789_t *tft);
+
+/** @brief Get the last recorded SPI transaction result for this display. */
+SPI_Status_t ST7789_GetLastSpiStatus(const ST7789_t *tft);
+
+/** @brief Set an optional per-device GPIO backlight state. */
+void ST7789_SetBacklight(ST7789_t *tft, bool enabled);
+
+/**
  * @brief Initialize an ST7789 display instance.
  *
  * @param[in,out] tft Display context.
@@ -396,7 +456,8 @@ uint16_t TFT_Height(void);
  * @param[in] xOffset Display RAM X offset.
  * @param[in] yOffset Display RAM Y offset.
  *
- * @return None.
+ * @return None. The legacy wrapper sets no backlight pin and requires
+ * an already initialized SPI bus. See ST7789_IsInitialized() for its state.
  */
 void ST7789_Init(
     ST7789_t *tft,
@@ -410,6 +471,10 @@ void ST7789_Init(
 
 /**
  * @brief Set the display RAM address window.
+ * @details Sends CASET/RASET/RAMWR as a complete standalone transaction.
+ * For actual pixel drawing use ST7789_DrawPixel()/ST7789_FillRect(): those
+ * keep the address window AND pixel bytes under a single CS assertion.
+ * Do not stream raw SPI bytes after this API on a shared bus.
  *
  * @param[in] tft Display context.
  * @param[in] x0 Start X coordinate.
