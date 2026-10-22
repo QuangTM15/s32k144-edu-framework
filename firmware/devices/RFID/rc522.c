@@ -1,112 +1,24 @@
 /**
  * @file rc522.c
- * @brief MFRC522 RFID device library implementation.
- *
- * @details
- * This implementation provides the following functional layers:
- *
- * - GPIO and SPI control.
- * - MFRC522 register access.
- * - Reader initialization and antenna control.
- * - Hardware CRC calculation.
- * - FIFO-based PCD communication.
- * - ISO/IEC 14443A card request.
- * - Cascade Level 1 anti-collision and selection.
- * - Four-byte UID and SAK reading.
- * - PICC halt command.
+ * @brief MFRC522 register and ISO14443A CL1 protocol over shared SPI.
+ * @details One SPI transaction per register/buffer access. No malloc, no
+ * ISR use, no nested transactions. CS is released after endTransaction().
  */
-
 #include "rc522.h"
-
 #include "Arduino.h"
 #include "arduino_pins.h"
-#include "spi.h"
+#include <stddef.h>
 
-/* ========================================================================= */
-/* Private Types                                                             */
-/* ========================================================================= */
-
-/**
- * @brief Internal operation status type.
- */
-typedef uint8_t rc522_status_t;
-
-/**
- * @brief Operation completed successfully.
- */
-#define RC522_STATUS_OK ((rc522_status_t)0U)
-
-/**
- * @brief General communication or protocol error.
- */
-#define RC522_STATUS_ERROR ((rc522_status_t)1U)
-
-/**
- * @brief Operation timed out.
- */
-#define RC522_STATUS_TIMEOUT ((rc522_status_t)2U)
-
-/**
- * @brief A card collision was reported.
- */
-#define RC522_STATUS_COLLISION ((rc522_status_t)3U)
-
-/**
- * @brief CRC or UID BCC validation failed.
- */
-#define RC522_STATUS_CRC_ERROR ((rc522_status_t)4U)
-
-/**
- * @brief An invalid argument was supplied.
- */
-#define RC522_STATUS_INVALID_ARG ((rc522_status_t)5U)
-
-/**
- * @brief The receive buffer is too small.
- */
-#define RC522_STATUS_NO_ROOM ((rc522_status_t)6U)
-
-/**
- * @brief The MFRC522 library is not initialized.
- */
-#define RC522_STATUS_NOT_INITIALIZED ((rc522_status_t)7U)
-
-/* ========================================================================= */
-/* Private Constants                                                         */
-/* ========================================================================= */
-
-/* ------------------------------------------------------------------------- */
-/* SPI configuration                                                         */
-/* ------------------------------------------------------------------------- */
-
-#define RC522_SPI_FREQUENCY_HZ (1000000UL)
-#define RC522_SPI_READ_MASK (0x80U)
-#define RC522_SPI_ADDRESS_MASK (0x7EU)
-#define RC522_SPI_DUMMY_BYTE (0x00U)
-
-/* ------------------------------------------------------------------------- */
-/* MFRC522 PCD commands                                                      */
-/* ------------------------------------------------------------------------- */
-
-#define RC522_COMMAND_IDLE (0x00U)
-#define RC522_COMMAND_CALC_CRC (0x03U)
-#define RC522_COMMAND_TRANSCEIVE (0x0CU)
-#define RC522_COMMAND_SOFT_RESET (0x0FU)
-
-/* ------------------------------------------------------------------------- */
-/* ISO/IEC 14443A PICC commands                                              */
-/* ------------------------------------------------------------------------- */
-
-#define RC522_PICC_COMMAND_REQA (0x26U)
-#define RC522_PICC_COMMAND_HLTA (0x50U)
-#define RC522_PICC_COMMAND_SEL_CL1 (0x93U)
-#define RC522_PICC_NVB_ANTICOLLISION (0x20U)
-#define RC522_PICC_NVB_SELECT (0x70U)
-
-/* ------------------------------------------------------------------------- */
-/* MFRC522 registers                                                         */
-/* ------------------------------------------------------------------------- */
-
+#define RC522_READ_MASK (0x80U)
+#define RC522_ADDRESS_MASK (0x7EU)
+#define RC522_DUMMY (0x00U)
+#define RC522_CMD_IDLE (0x00U)
+#define RC522_CMD_CRC (0x03U)
+#define RC522_CMD_TRANSCEIVE (0x0CU)
+#define RC522_CMD_RESET (0x0FU)
+#define RC522_PICC_REQA (0x26U)
+#define RC522_PICC_HLTA (0x50U)
+#define RC522_PICC_SEL_CL1 (0x93U)
 #define RC522_REG_COMMAND (0x01U)
 #define RC522_REG_COM_IRQ (0x04U)
 #define RC522_REG_DIV_IRQ (0x05U)
@@ -116,1320 +28,569 @@ typedef uint8_t rc522_status_t;
 #define RC522_REG_CONTROL (0x0CU)
 #define RC522_REG_BIT_FRAMING (0x0DU)
 #define RC522_REG_COLL (0x0EU)
-
 #define RC522_REG_MODE (0x11U)
 #define RC522_REG_TX_MODE (0x12U)
 #define RC522_REG_RX_MODE (0x13U)
 #define RC522_REG_TX_CONTROL (0x14U)
 #define RC522_REG_TX_ASK (0x15U)
-
-#define RC522_REG_CRC_RESULT_H (0x21U)
-#define RC522_REG_CRC_RESULT_L (0x22U)
-
+#define RC522_REG_CRC_H (0x21U)
+#define RC522_REG_CRC_L (0x22U)
 #define RC522_REG_T_MODE (0x2AU)
 #define RC522_REG_T_PRESCALER (0x2BU)
 #define RC522_REG_T_RELOAD_H (0x2CU)
 #define RC522_REG_T_RELOAD_L (0x2DU)
-
 #define RC522_REG_VERSION (0x37U)
+#define RC522_IRQ_CRC (0x04U)
+#define RC522_IRQ_WAIT (0x31U)
+#define RC522_IRQ_TIMER (0x01U)
+#define RC522_ERROR_COLLISION (0x08U)
+#define RC522_ERROR_CRC (0x04U)
+#define RC522_ERROR_FATAL (0x11U)
+#define RC522_FIFO_FLUSH (0x80U)
+#define RC522_START_SEND (0x80U)
+#define RC522_ANTENNA_MASK (0x03U)
+#define RC522_RESET_POLL_LIMIT (1000UL)
+#define RC522_CRC_POLL_LIMIT (5000UL)
+#define RC522_RF_POLL_LIMIT (10000UL)
 
-/* ------------------------------------------------------------------------- */
-/* Register masks                                                            */
-/* ------------------------------------------------------------------------- */
-
-#define RC522_COMMAND_POWER_DOWN_MASK (0x10U)
-
-#define RC522_COM_IRQ_RX_MASK (0x20U)
-#define RC522_COM_IRQ_IDLE_MASK (0x10U)
-#define RC522_COM_IRQ_TIMER_MASK (0x01U)
-
-#define RC522_COM_IRQ_WAIT_MASK \
-    (RC522_COM_IRQ_RX_MASK |    \
-     RC522_COM_IRQ_IDLE_MASK |  \
-     RC522_COM_IRQ_TIMER_MASK)
-
-#define RC522_DIV_IRQ_CRC_MASK (0x04U)
-
-#define RC522_ERROR_BUFFER_OVERFLOW_MASK (0x10U)
-#define RC522_ERROR_COLLISION_MASK (0x08U)
-#define RC522_ERROR_CRC_MASK (0x04U)
-#define RC522_ERROR_PROTOCOL_MASK (0x01U)
-
-#define RC522_ERROR_FATAL_MASK          \
-    (RC522_ERROR_BUFFER_OVERFLOW_MASK | \
-     RC522_ERROR_PROTOCOL_MASK)
-
-#define RC522_FIFO_FLUSH_MASK (0x80U)
-
-#define RC522_BIT_FRAMING_START_SEND_MASK (0x80U)
-#define RC522_BIT_FRAMING_TX_LAST_BITS_MASK (0x07U)
-
-#define RC522_CONTROL_RX_LAST_BITS_MASK (0x07U)
-#define RC522_COLL_VALUES_AFTER_MASK (0x80U)
-#define RC522_TX_CONTROL_ANTENNA_MASK (0x03U)
-
-/* ------------------------------------------------------------------------- */
-/* Default configuration                                                     */
-/* ------------------------------------------------------------------------- */
-
-#define RC522_TX_MODE_DEFAULT (0x00U)
-#define RC522_RX_MODE_DEFAULT (0x00U)
-#define RC522_T_MODE_DEFAULT (0x80U)
-#define RC522_T_PRESCALER_DEFAULT (0xA9U)
-#define RC522_T_RELOAD_H_DEFAULT (0x03U)
-#define RC522_T_RELOAD_L_DEFAULT (0xE8U)
-#define RC522_TX_ASK_DEFAULT (0x40U)
-#define RC522_MODE_DEFAULT (0x3DU)
-
-/* ------------------------------------------------------------------------- */
-/* Protocol constants                                                        */
-/* ------------------------------------------------------------------------- */
-
-#define RC522_ATQA_SIZE (2U)
-#define RC522_ANTICOLLISION_SIZE (5U)
-#define RC522_SELECT_FRAME_SIZE (9U)
-#define RC522_SELECT_RESPONSE_SIZE (3U)
-#define RC522_HALT_FRAME_SIZE (4U)
-
-#define RC522_CRC_SIZE (2U)
-
-#define RC522_REQA_VALID_BITS (7U)
-#define RC522_FULL_BYTE_VALID_BITS (0U)
-
-#define RC522_UID_BCC_INDEX (4U)
-#define RC522_SAK_INDEX (0U)
-#define RC522_SAK_CASCADE_BIT_MASK (0x04U)
-
-/* ------------------------------------------------------------------------- */
-/* Timing and timeout constants                                              */
-/* ------------------------------------------------------------------------- */
-
-#define RC522_HARD_RESET_LOW_DELAY_MS (2UL)
-#define RC522_HARD_RESET_STARTUP_DELAY_MS (50UL)
-#define RC522_SOFT_RESET_DELAY_MS (1UL)
-
-#define RC522_RESET_TIMEOUT_COUNT (1000UL)
-#define RC522_CRC_TIMEOUT_COUNT (5000UL)
-#define RC522_TRANSCEIVE_TIMEOUT_COUNT (10000UL)
-
-/* ========================================================================= */
-/* Private State                                                             */
-/* ========================================================================= */
-
-/**
- * @brief User-selected software chip-select pin.
- */
-static uint8_t s_u8Rc522CsPin = GPIO0;
-
-/**
- * @brief User-selected hardware reset pin.
- */
-static uint8_t s_u8Rc522ResetPin = GPIO1;
-
-/**
- * @brief Control-pin configuration state.
- */
-static bool s_bRc522PinsConfigured = false;
-
-/**
- * @brief Complete reader initialization state.
- */
-static bool s_bRc522Initialized = false;
-
-/* ========================================================================= */
-/* Private Function Prototypes                                               */
-/* ========================================================================= */
-
-/* GPIO and validation */
-static bool RC522_IsValidPins(uint8_t csPin,
-                              uint8_t resetPin);
-
-static bool RC522_IsVersionSupported(uint8_t version);
-
-static void RC522_Select(void);
-static void RC522_Deselect(void);
-
-/* Register access */
-static uint8_t RC522_BuildReadAddress(uint8_t registerAddress);
-static uint8_t RC522_BuildWriteAddress(uint8_t registerAddress);
-
-static uint8_t RC522_ReadRegister(uint8_t registerAddress);
-
-static void RC522_WriteRegister(uint8_t registerAddress,
-                                uint8_t value);
-
-static void RC522_SetRegisterBitMask(uint8_t registerAddress,
-                                     uint8_t mask);
-
-static void RC522_ClearRegisterBitMask(uint8_t registerAddress,
-                                       uint8_t mask);
-
-static void RC522_WriteRegisterBuffer(uint8_t registerAddress,
-                                      const uint8_t *pBuffer,
-                                      uint8_t length);
-
-static void RC522_ReadRegisterBuffer(uint8_t registerAddress,
-                                     uint8_t *pBuffer,
-                                     uint8_t length);
-
-/* PCD configuration and communication */
-static void RC522_ApplyDefaultConfiguration(void);
-
-static rc522_status_t RC522_CalculateCRC(
-    const uint8_t *pData,
-    uint8_t length,
-    uint8_t *pResult);
-
-static rc522_status_t RC522_Transceive(
-    const uint8_t *pTxData,
-    uint8_t txLength,
-    uint8_t txLastBits,
-    uint8_t *pRxData,
-    uint8_t *pRxLength,
-    uint8_t *pRxValidBits);
-
-/* PICC communication */
-static rc522_status_t RC522_RequestA(uint8_t *pAtqa);
-
-static rc522_status_t RC522_AntiCollisionCL1(
-    uint8_t *pUidAndBcc);
-
-static rc522_status_t RC522_SelectCL1(
-    const uint8_t *pUidAndBcc,
-    uint8_t *pSak);
-
-/* ========================================================================= */
-/* GPIO and Validation                                                       */
-/* ========================================================================= */
-
-static bool RC522_IsValidPins(uint8_t csPin,
-                              uint8_t resetPin)
+typedef enum
 {
-    bool bIsValid = false;
+    RC522_OK = 0,
+    RC522_ERROR,
+    RC522_TIMEOUT,
+    RC522_COLLISION,
+    RC522_CRC_ERROR,
+    RC522_INVALID_ARG,
+    RC522_NO_ROOM,
+    RC522_NOT_READY,
+    RC522_SPI_ERROR
+} rc522_status_t;
 
-    if ((ARDUINO_VALID_TRUE ==
-         Arduino_HasDigitalCapability(csPin)) &&
-        (ARDUINO_VALID_TRUE ==
-         Arduino_HasDigitalCapability(resetPin)) &&
-        (csPin != resetPin))
+static uint8_t s_csPin = GPIO4;
+static uint8_t s_resetPin = GPIO5;
+static bool s_pinsReady = false;
+static bool s_initialized = false;
+static SPI_Status_t s_lastSpi = SPI_STATUS_NOT_INIT;
+static const SPI_Settings_t s_spiSettings = {SPI_MODE0, SPI_MSBFIRST, SPI_FRAME_SIZE_8, RC522_SPI_FREQUENCY_HZ};
+
+static bool RC522_ValidPins(uint8_t cs, uint8_t rst)
+{
+    return (cs != rst) && (ARDUINO_VALID_TRUE == Arduino_HasDigitalCapability(cs)) &&
+           (ARDUINO_VALID_TRUE == Arduino_HasDigitalCapability(rst));
+}
+
+static bool RC522_ValidVersion(uint8_t version)
+{
+    return (RC522_VERSION_COMPATIBLE_82 == version) || (RC522_VERSION_CLONE_88 == version) ||
+           (RC522_VERSION_1_0 == version) || (RC522_VERSION_2_0 == version);
+}
+
+/** @brief Acquire SPI profile first, then assert CS. */
+static rc522_status_t RC522_BeginAccess(void)
+{
+    rc522_status_t result = RC522_NOT_READY;
+    if (s_pinsReady)
     {
-        bIsValid = true;
-    }
-    else
-    {
-        bIsValid = false;
-    }
-
-    return bIsValid;
-}
-
-static bool RC522_IsVersionSupported(uint8_t version)
-{
-    bool bIsSupported = false;
-
-    if ((RC522_VERSION_COMPATIBLE_82 == version) ||
-        (RC522_VERSION_CLONE_88 == version) ||
-        (RC522_VERSION_1_0 == version) ||
-        (RC522_VERSION_2_0 == version))
-    {
-        bIsSupported = true;
-    }
-    else
-    {
-        bIsSupported = false;
-    }
-
-    return bIsSupported;
-}
-
-static void RC522_Select(void)
-{
-    digitalWrite(s_u8Rc522CsPin, LOW);
-
-    return;
-}
-
-static void RC522_Deselect(void)
-{
-    digitalWrite(s_u8Rc522CsPin, HIGH);
-
-    return;
-}
-
-/* ========================================================================= */
-/* Register Access                                                           */
-/* ========================================================================= */
-
-static uint8_t RC522_BuildReadAddress(uint8_t registerAddress)
-{
-    uint8_t u8Address = 0U;
-
-    u8Address =
-        (uint8_t)(RC522_SPI_READ_MASK |
-                  ((registerAddress << 1U) &
-                   RC522_SPI_ADDRESS_MASK));
-
-    return u8Address;
-}
-
-static uint8_t RC522_BuildWriteAddress(uint8_t registerAddress)
-{
-    uint8_t u8Address = 0U;
-
-    u8Address =
-        (uint8_t)((registerAddress << 1U) &
-                  RC522_SPI_ADDRESS_MASK);
-
-    return u8Address;
-}
-
-static uint8_t RC522_ReadRegister(uint8_t registerAddress)
-{
-    uint8_t u8Value = 0U;
-
-    RC522_Select();
-
-    (void)SPI_transfer(
-        RC522_BuildReadAddress(registerAddress));
-
-    u8Value =
-        SPI_transfer(RC522_SPI_DUMMY_BYTE);
-
-    RC522_Deselect();
-
-    return u8Value;
-}
-
-static void RC522_WriteRegister(uint8_t registerAddress,
-                                uint8_t value)
-{
-    RC522_Select();
-
-    (void)SPI_transfer(
-        RC522_BuildWriteAddress(registerAddress));
-
-    (void)SPI_transfer(value);
-
-    RC522_Deselect();
-
-    return;
-}
-
-static void RC522_SetRegisterBitMask(uint8_t registerAddress,
-                                     uint8_t mask)
-{
-    uint8_t u8Value = 0U;
-
-    u8Value = RC522_ReadRegister(registerAddress);
-    u8Value = (uint8_t)(u8Value | mask);
-
-    RC522_WriteRegister(registerAddress,
-                        u8Value);
-
-    return;
-}
-
-static void RC522_ClearRegisterBitMask(uint8_t registerAddress,
-                                       uint8_t mask)
-{
-    uint8_t u8Value = 0U;
-
-    u8Value = RC522_ReadRegister(registerAddress);
-    u8Value = (uint8_t)(u8Value &
-                        (uint8_t)(~mask));
-
-    RC522_WriteRegister(registerAddress,
-                        u8Value);
-
-    return;
-}
-
-static void RC522_WriteRegisterBuffer(uint8_t registerAddress,
-                                      const uint8_t *pBuffer,
-                                      uint8_t length)
-{
-    uint8_t u8Index = 0U;
-
-    if (((const uint8_t *)0 != pBuffer) &&
-        (0U != length))
-    {
-        RC522_Select();
-
-        (void)SPI_transfer(
-            RC522_BuildWriteAddress(registerAddress));
-
-        for (u8Index = 0U;
-             u8Index < length;
-             u8Index++)
+        s_lastSpi = SPI_beginTransaction(&s_spiSettings);
+        if (SPI_STATUS_OK == s_lastSpi)
         {
-            (void)SPI_transfer(pBuffer[u8Index]);
-        }
-
-        RC522_Deselect();
-    }
-    else
-    {
-        /* Invalid buffer or zero length. */
-    }
-
-    return;
-}
-
-static void RC522_ReadRegisterBuffer(uint8_t registerAddress,
-                                     uint8_t *pBuffer,
-                                     uint8_t length)
-{
-    uint8_t u8Index = 0U;
-    uint8_t u8ReadAddress = 0U;
-
-    if (((uint8_t *)0 != pBuffer) &&
-        (0U != length))
-    {
-        u8ReadAddress =
-            RC522_BuildReadAddress(registerAddress);
-
-        RC522_Select();
-
-        /*
-         * Begin the MFRC522 multi-byte read transaction.
-         */
-        (void)SPI_transfer(u8ReadAddress);
-
-        /*
-         * Retransmit the read address for all intermediate bytes.
-         * This is required when sequentially reading FIFODataReg.
-         */
-        for (u8Index = 0U;
-             u8Index < (uint8_t)(length - 1U);
-             u8Index++)
-        {
-            pBuffer[u8Index] =
-                SPI_transfer(u8ReadAddress);
-        }
-
-        /*
-         * Receive the final byte while transmitting a dummy byte.
-         */
-        pBuffer[length - 1U] =
-            SPI_transfer(RC522_SPI_DUMMY_BYTE);
-
-        RC522_Deselect();
-    }
-    else
-    {
-        /* Invalid buffer or zero length. */
-    }
-
-    return;
-}
-
-/* ========================================================================= */
-/* PCD Configuration                                                         */
-/* ========================================================================= */
-
-static void RC522_ApplyDefaultConfiguration(void)
-{
-    RC522_WriteRegister(RC522_REG_TX_MODE,
-                        RC522_TX_MODE_DEFAULT);
-
-    RC522_WriteRegister(RC522_REG_RX_MODE,
-                        RC522_RX_MODE_DEFAULT);
-
-    RC522_WriteRegister(RC522_REG_T_MODE,
-                        RC522_T_MODE_DEFAULT);
-
-    RC522_WriteRegister(RC522_REG_T_PRESCALER,
-                        RC522_T_PRESCALER_DEFAULT);
-
-    RC522_WriteRegister(RC522_REG_T_RELOAD_H,
-                        RC522_T_RELOAD_H_DEFAULT);
-
-    RC522_WriteRegister(RC522_REG_T_RELOAD_L,
-                        RC522_T_RELOAD_L_DEFAULT);
-
-    RC522_WriteRegister(RC522_REG_TX_ASK,
-                        RC522_TX_ASK_DEFAULT);
-
-    RC522_WriteRegister(RC522_REG_MODE,
-                        RC522_MODE_DEFAULT);
-
-    return;
-}
-
-/* ========================================================================= */
-/* CRC Calculation                                                           */
-/* ========================================================================= */
-
-static rc522_status_t RC522_CalculateCRC(
-    const uint8_t *pData,
-    uint8_t length,
-    uint8_t *pResult)
-{
-    rc522_status_t Status =
-        RC522_STATUS_OK;
-
-    uint32_t u32Timeout =
-        RC522_CRC_TIMEOUT_COUNT;
-
-    uint8_t u8Irq = 0U;
-
-    if (((const uint8_t *)0 == pData) ||
-        ((uint8_t *)0 == pResult) ||
-        (0U == length))
-    {
-        Status = RC522_STATUS_INVALID_ARG;
-    }
-    else if (false == s_bRc522Initialized)
-    {
-        Status =
-            RC522_STATUS_NOT_INITIALIZED;
-    }
-    else
-    {
-        RC522_WriteRegister(
-            RC522_REG_COMMAND,
-            RC522_COMMAND_IDLE);
-
-        /*
-         * Clear the CRC interrupt request flag.
-         */
-        RC522_WriteRegister(
-            RC522_REG_DIV_IRQ,
-            RC522_DIV_IRQ_CRC_MASK);
-
-        RC522_SetRegisterBitMask(
-            RC522_REG_FIFO_LEVEL,
-            RC522_FIFO_FLUSH_MASK);
-
-        RC522_WriteRegisterBuffer(
-            RC522_REG_FIFO_DATA,
-            pData,
-            length);
-
-        RC522_WriteRegister(
-            RC522_REG_COMMAND,
-            RC522_COMMAND_CALC_CRC);
-
-        do
-        {
-            u8Irq =
-                RC522_ReadRegister(
-                    RC522_REG_DIV_IRQ);
-
-            u32Timeout--;
-        } while ((0U ==
-                  (u8Irq &
-                   RC522_DIV_IRQ_CRC_MASK)) &&
-                 (0UL != u32Timeout));
-
-        RC522_WriteRegister(
-            RC522_REG_COMMAND,
-            RC522_COMMAND_IDLE);
-
-        if (0UL == u32Timeout)
-        {
-            Status = RC522_STATUS_TIMEOUT;
+            digitalWrite(s_csPin, LOW);
+            result = RC522_OK;
         }
         else
         {
-            pResult[0U] =
-                RC522_ReadRegister(
-                    RC522_REG_CRC_RESULT_L);
-
-            pResult[1U] =
-                RC522_ReadRegister(
-                    RC522_REG_CRC_RESULT_H);
-
-            Status = RC522_STATUS_OK;
+            result = RC522_SPI_ERROR;
         }
     }
-
-    return Status;
+    return result;
 }
 
-/* ========================================================================= */
-/* PCD Communication                                                         */
-/* ========================================================================= */
-
-static rc522_status_t RC522_Transceive(
-    const uint8_t *pTxData,
-    uint8_t txLength,
-    uint8_t txLastBits,
-    uint8_t *pRxData,
-    uint8_t *pRxLength,
-    uint8_t *pRxValidBits)
+/** @brief Keep CS low until the bus has finished the final bit. */
+static rc522_status_t RC522_EndAccess(rc522_status_t result)
 {
-    rc522_status_t Status =
-        RC522_STATUS_OK;
-
-    uint32_t u32Timeout =
-        RC522_TRANSCEIVE_TIMEOUT_COUNT;
-
-    uint8_t u8Irq = 0U;
-    uint8_t u8Error = 0U;
-    uint8_t u8FifoLevel = 0U;
-    uint8_t u8ValidBits = 0U;
-
-    if (((const uint8_t *)0 == pTxData) ||
-        (0U == txLength))
+    SPI_Status_t endStatus = SPI_endTransaction();
+    digitalWrite(s_csPin, HIGH);
+    if (SPI_STATUS_OK != endStatus)
     {
-        Status = RC522_STATUS_INVALID_ARG;
+        s_lastSpi = endStatus;
+        result = RC522_SPI_ERROR;
     }
-    else if (false == s_bRc522Initialized)
+    else if (RC522_SPI_ERROR != result)
     {
-        Status =
-            RC522_STATUS_NOT_INITIALIZED;
+        s_lastSpi = SPI_STATUS_OK;
     }
-    else
-    {
-        RC522_WriteRegister(
-            RC522_REG_COMMAND,
-            RC522_COMMAND_IDLE);
-
-        /*
-         * Clear all ComIrqReg flags.
-         */
-        RC522_WriteRegister(
-            RC522_REG_COM_IRQ,
-            0x7FU);
-
-        RC522_SetRegisterBitMask(
-            RC522_REG_FIFO_LEVEL,
-            RC522_FIFO_FLUSH_MASK);
-
-        RC522_WriteRegisterBuffer(
-            RC522_REG_FIFO_DATA,
-            pTxData,
-            txLength);
-
-        RC522_WriteRegister(
-            RC522_REG_BIT_FRAMING,
-            (uint8_t)(txLastBits &
-                      RC522_BIT_FRAMING_TX_LAST_BITS_MASK));
-
-        RC522_WriteRegister(
-            RC522_REG_COMMAND,
-            RC522_COMMAND_TRANSCEIVE);
-
-        RC522_SetRegisterBitMask(
-            RC522_REG_BIT_FRAMING,
-            RC522_BIT_FRAMING_START_SEND_MASK);
-
-        do
-        {
-            u8Irq =
-                RC522_ReadRegister(
-                    RC522_REG_COM_IRQ);
-
-            u32Timeout--;
-        } while ((0U ==
-                  (u8Irq &
-                   RC522_COM_IRQ_WAIT_MASK)) &&
-                 (0UL != u32Timeout));
-
-        RC522_ClearRegisterBitMask(
-            RC522_REG_BIT_FRAMING,
-            RC522_BIT_FRAMING_START_SEND_MASK);
-
-        if ((0UL == u32Timeout) ||
-            (0U !=
-             (u8Irq &
-              RC522_COM_IRQ_TIMER_MASK)))
-        {
-            Status = RC522_STATUS_TIMEOUT;
-        }
-        else
-        {
-            u8Error =
-                RC522_ReadRegister(
-                    RC522_REG_ERROR);
-
-            if (0U !=
-                (u8Error &
-                 RC522_ERROR_COLLISION_MASK))
-            {
-                Status =
-                    RC522_STATUS_COLLISION;
-            }
-            else if (0U !=
-                     (u8Error &
-                      RC522_ERROR_CRC_MASK))
-            {
-                Status =
-                    RC522_STATUS_CRC_ERROR;
-            }
-            else if (0U !=
-                     (u8Error &
-                      RC522_ERROR_FATAL_MASK))
-            {
-                Status =
-                    RC522_STATUS_ERROR;
-            }
-            else if (((uint8_t *)0 != pRxData) &&
-                     ((uint8_t *)0 != pRxLength))
-            {
-                u8FifoLevel =
-                    RC522_ReadRegister(
-                        RC522_REG_FIFO_LEVEL);
-
-                if (*pRxLength < u8FifoLevel)
-                {
-                    Status =
-                        RC522_STATUS_NO_ROOM;
-                }
-                else
-                {
-                    RC522_ReadRegisterBuffer(
-                        RC522_REG_FIFO_DATA,
-                        pRxData,
-                        u8FifoLevel);
-
-                    *pRxLength = u8FifoLevel;
-
-                    u8ValidBits =
-                        (uint8_t)(RC522_ReadRegister(
-                                      RC522_REG_CONTROL) &
-                                  RC522_CONTROL_RX_LAST_BITS_MASK);
-
-                    if ((uint8_t *)0 !=
-                        pRxValidBits)
-                    {
-                        *pRxValidBits =
-                            u8ValidBits;
-                    }
-                    else
-                    {
-                        /* Valid-bit output is optional. */
-                    }
-
-                    Status = RC522_STATUS_OK;
-                }
-            }
-            else
-            {
-                /*
-                 * A receive buffer is optional for commands such as HLTA.
-                 */
-                Status = RC522_STATUS_OK;
-            }
-        }
-    }
-
-    return Status;
+    return result;
 }
 
-/* ========================================================================= */
-/* PICC Request and Selection                                                */
-/* ========================================================================= */
-
-static rc522_status_t RC522_RequestA(uint8_t *pAtqa)
+static rc522_status_t RC522_Exchange(uint8_t tx, uint8_t *rx)
 {
-    rc522_status_t Status =
-        RC522_STATUS_OK;
-
-    uint8_t au8Command[1U] =
-        {
-            RC522_PICC_COMMAND_REQA};
-
-    uint8_t u8ResponseLength =
-        RC522_ATQA_SIZE;
-
-    uint8_t u8ValidBits = 0U;
-
-    if ((uint8_t *)0 == pAtqa)
+    rc522_status_t result = RC522_OK;
+    uint8_t value = SPI_transfer(tx);
+    SPI_Status_t status = SPI_getLastStatus();
+    if (SPI_STATUS_OK != status)
     {
-        Status =
-            RC522_STATUS_INVALID_ARG;
+        s_lastSpi = status;
+        result = RC522_SPI_ERROR;
     }
-    else
+    else if (NULL != rx)
     {
-        RC522_ClearRegisterBitMask(
-            RC522_REG_COLL,
-            RC522_COLL_VALUES_AFTER_MASK);
-
-        Status = RC522_Transceive(
-            au8Command,
-            1U,
-            RC522_REQA_VALID_BITS,
-            pAtqa,
-            &u8ResponseLength,
-            &u8ValidBits);
-
-        if (RC522_STATUS_OK == Status)
-        {
-            if ((RC522_ATQA_SIZE !=
-                 u8ResponseLength) ||
-                (0U != u8ValidBits))
-            {
-                Status =
-                    RC522_STATUS_ERROR;
-            }
-            else
-            {
-                /* A valid ATQA response was received. */
-            }
-        }
+        *rx = value;
     }
-
-    return Status;
+    return result;
 }
 
-static rc522_status_t RC522_AntiCollisionCL1(
-    uint8_t *pUidAndBcc)
+static uint8_t RC522_ReadAddress(uint8_t reg)
 {
-    rc522_status_t Status =
-        RC522_STATUS_OK;
-
-    uint8_t au8Frame[2U] =
-        {
-            RC522_PICC_COMMAND_SEL_CL1,
-            RC522_PICC_NVB_ANTICOLLISION};
-
-    uint8_t u8ResponseLength =
-        RC522_ANTICOLLISION_SIZE;
-
-    uint8_t u8ValidBits = 0U;
-    uint8_t u8Bcc = 0U;
-
-    if ((uint8_t *)0 == pUidAndBcc)
-    {
-        Status =
-            RC522_STATUS_INVALID_ARG;
-    }
-    else
-    {
-        RC522_ClearRegisterBitMask(
-            RC522_REG_COLL,
-            RC522_COLL_VALUES_AFTER_MASK);
-
-        Status = RC522_Transceive(
-            au8Frame,
-            2U,
-            RC522_FULL_BYTE_VALID_BITS,
-            pUidAndBcc,
-            &u8ResponseLength,
-            &u8ValidBits);
-
-        if (RC522_STATUS_OK == Status)
-        {
-            if ((RC522_ANTICOLLISION_SIZE !=
-                 u8ResponseLength) ||
-                (0U != u8ValidBits))
-            {
-                Status =
-                    RC522_STATUS_ERROR;
-            }
-            else
-            {
-                u8Bcc =
-                    (uint8_t)(pUidAndBcc[0U] ^
-                              pUidAndBcc[1U] ^
-                              pUidAndBcc[2U] ^
-                              pUidAndBcc[3U]);
-
-                if (u8Bcc !=
-                    pUidAndBcc[RC522_UID_BCC_INDEX])
-                {
-                    Status =
-                        RC522_STATUS_CRC_ERROR;
-                }
-                else
-                {
-                    /* UID BCC validation succeeded. */
-                }
-            }
-        }
-    }
-
-    return Status;
+    return (uint8_t)(RC522_READ_MASK | ((reg << 1U) & RC522_ADDRESS_MASK));
 }
 
-static rc522_status_t RC522_SelectCL1(
-    const uint8_t *pUidAndBcc,
-    uint8_t *pSak)
+static uint8_t RC522_WriteAddress(uint8_t reg)
 {
-    rc522_status_t Status =
-        RC522_STATUS_OK;
-
-    uint8_t au8Frame[RC522_SELECT_FRAME_SIZE] = {0U};
-
-    uint8_t au8Response[RC522_SELECT_RESPONSE_SIZE] = {0U};
-
-    uint8_t au8CalculatedCrc[RC522_CRC_SIZE] = {0U};
-
-    uint8_t u8ResponseLength =
-        RC522_SELECT_RESPONSE_SIZE;
-
-    uint8_t u8ValidBits = 0U;
-    uint8_t u8Index = 0U;
-
-    if (((const uint8_t *)0 ==
-         pUidAndBcc) ||
-        ((uint8_t *)0 == pSak))
-    {
-        Status =
-            RC522_STATUS_INVALID_ARG;
-    }
-    else
-    {
-        au8Frame[0U] =
-            RC522_PICC_COMMAND_SEL_CL1;
-
-        au8Frame[1U] =
-            RC522_PICC_NVB_SELECT;
-
-        for (u8Index = 0U;
-             u8Index <
-             RC522_ANTICOLLISION_SIZE;
-             u8Index++)
-        {
-            au8Frame[u8Index + 2U] =
-                pUidAndBcc[u8Index];
-        }
-
-        Status = RC522_CalculateCRC(
-            au8Frame,
-            7U,
-            &au8Frame[7U]);
-
-        if (RC522_STATUS_OK == Status)
-        {
-            Status = RC522_Transceive(
-                au8Frame,
-                RC522_SELECT_FRAME_SIZE,
-                RC522_FULL_BYTE_VALID_BITS,
-                au8Response,
-                &u8ResponseLength,
-                &u8ValidBits);
-        }
-        else
-        {
-            /* CRC calculation failed. */
-        }
-
-        if (RC522_STATUS_OK == Status)
-        {
-            if ((RC522_SELECT_RESPONSE_SIZE !=
-                 u8ResponseLength) ||
-                (0U != u8ValidBits))
-            {
-                Status =
-                    RC522_STATUS_ERROR;
-            }
-            else
-            {
-                Status = RC522_CalculateCRC(
-                    au8Response,
-                    1U,
-                    au8CalculatedCrc);
-            }
-        }
-
-        if (RC522_STATUS_OK == Status)
-        {
-            if ((au8CalculatedCrc[0U] !=
-                 au8Response[1U]) ||
-                (au8CalculatedCrc[1U] !=
-                 au8Response[2U]))
-            {
-                Status =
-                    RC522_STATUS_CRC_ERROR;
-            }
-            else
-            {
-                *pSak =
-                    au8Response[RC522_SAK_INDEX];
-
-                if (0U !=
-                    (*pSak &
-                     RC522_SAK_CASCADE_BIT_MASK))
-                {
-                    /*
-                     * Cascade Level 2 is required, but the current library
-                     * only supports four-byte UIDs.
-                     */
-                    Status =
-                        RC522_STATUS_ERROR;
-                }
-                else
-                {
-                    /* Single-size UID selection succeeded. */
-                }
-            }
-        }
-    }
-
-    return Status;
+    return (uint8_t)((reg << 1U) & RC522_ADDRESS_MASK);
 }
 
-/* ========================================================================= */
-/* Public PCD API                                                            */
-/* ========================================================================= */
-
-bool RC522_PCD_Init(uint8_t csPin,
-                    uint8_t resetPin)
+static rc522_status_t RC522_ReadReg(uint8_t reg, uint8_t *value)
 {
-    bool bInitialized = false;
-    bool bResetCompleted = false;
-    uint8_t u8Version =
-        RC522_VERSION_INVALID;
-
-    s_bRc522PinsConfigured = false;
-    s_bRc522Initialized = false;
-
-    if (true ==
-        RC522_IsValidPins(csPin,
-                          resetPin))
+    rc522_status_t result = RC522_INVALID_ARG;
+    uint8_t readValue = 0U;
+    bool acquired = false;
+    if (NULL != value)
     {
-        s_u8Rc522CsPin = csPin;
-        s_u8Rc522ResetPin = resetPin;
+        result = RC522_BeginAccess();
+        acquired = (RC522_OK == result);
+        if (RC522_OK == result)
+            result = RC522_Exchange(RC522_ReadAddress(reg), NULL);
+        if (RC522_OK == result)
+            result = RC522_Exchange(RC522_DUMMY, &readValue);
+        if (acquired)
+            result = RC522_EndAccess(result);
+        if (RC522_OK == result)
+            *value = readValue;
+    }
+    return result;
+}
 
-        pinMode(s_u8Rc522CsPin,
-                OUTPUT);
+static rc522_status_t RC522_WriteReg(uint8_t reg, uint8_t value)
+{
+    rc522_status_t result = RC522_BeginAccess();
+    bool acquired = (RC522_OK == result);
+    if (RC522_OK == result)
+        result = RC522_Exchange(RC522_WriteAddress(reg), NULL);
+    if (RC522_OK == result)
+        result = RC522_Exchange(value, NULL);
+    if (acquired)
+        result = RC522_EndAccess(result);
+    return result;
+}
 
-        pinMode(s_u8Rc522ResetPin,
-                OUTPUT);
-
-        RC522_Deselect();
-
-        digitalWrite(s_u8Rc522ResetPin,
-                     HIGH);
-
-        s_bRc522PinsConfigured = true;
-
-        SPI_beginEx(SPI_ROLE_MASTER,
-                    RC522_SPI_FREQUENCY_HZ,
-                    SPI_MODE0,
-                    SPI_MSBFIRST);
-
-        bResetCompleted =
-            RC522_PCD_Reset();
-
-        if (true == bResetCompleted)
+static rc522_status_t RC522_WriteBuffer(uint8_t reg, const uint8_t *data, uint8_t length)
+{
+    rc522_status_t result = RC522_INVALID_ARG;
+    uint8_t i = 0U;
+    bool acquired = false;
+    if ((NULL != data) && (0U != length))
+    {
+        result = RC522_BeginAccess();
+        acquired = (RC522_OK == result);
+        if (RC522_OK == result)
+            result = RC522_Exchange(RC522_WriteAddress(reg), NULL);
+        while ((RC522_OK == result) && (i < length))
         {
-            RC522_ApplyDefaultConfiguration();
-            RC522_PCD_AntennaOn();
-
-            u8Version =
-                RC522_ReadRegister(
-                    RC522_REG_VERSION);
-
-            if (true ==
-                RC522_IsVersionSupported(
-                    u8Version))
-            {
-                s_bRc522Initialized = true;
-                bInitialized = true;
-            }
-            else
-            {
-                s_bRc522Initialized = false;
-                bInitialized = false;
-            }
+            result = RC522_Exchange(data[i], NULL);
+            i++;
         }
-        else
+        if (acquired)
+            result = RC522_EndAccess(result);
+    }
+    return result;
+}
+
+/** @brief Preserve original MFRC522 FIFO read framing. */
+static rc522_status_t RC522_ReadBuffer(uint8_t reg, uint8_t *data, uint8_t length)
+{
+    rc522_status_t result = RC522_INVALID_ARG;
+    uint8_t i = 0U;
+    uint8_t address = RC522_ReadAddress(reg);
+    bool acquired = false;
+    if ((NULL != data) && (0U != length))
+    {
+        result = RC522_BeginAccess();
+        acquired = (RC522_OK == result);
+        if (RC522_OK == result)
+            result = RC522_Exchange(address, NULL);
+        while ((RC522_OK == result) && (i < length))
         {
-            bInitialized = false;
+            uint8_t tx = ((uint8_t)(i + 1U) < length) ? address : RC522_DUMMY;
+            result = RC522_Exchange(tx, &data[i]);
+            i++;
+        }
+        if (acquired)
+            result = RC522_EndAccess(result);
+    }
+    return result;
+}
+
+static rc522_status_t RC522_UpdateBits(uint8_t reg, uint8_t mask, bool set)
+{
+    uint8_t value = 0U;
+    rc522_status_t result = RC522_ReadReg(reg, &value);
+    if (RC522_OK == result)
+    {
+        value = set ? (uint8_t)(value | mask) : (uint8_t)(value & (uint8_t)~mask);
+        result = RC522_WriteReg(reg, value);
+    }
+    return result;
+}
+
+static rc522_status_t RC522_ApplyDefaults(void)
+{
+    rc522_status_t result = RC522_WriteReg(RC522_REG_TX_MODE, 0x00U);
+    if (RC522_OK == result)
+        result = RC522_WriteReg(RC522_REG_RX_MODE, 0x00U);
+    if (RC522_OK == result)
+        result = RC522_WriteReg(RC522_REG_T_MODE, 0x80U);
+    if (RC522_OK == result)
+        result = RC522_WriteReg(RC522_REG_T_PRESCALER, 0xA9U);
+    if (RC522_OK == result)
+        result = RC522_WriteReg(RC522_REG_T_RELOAD_H, 0x03U);
+    if (RC522_OK == result)
+        result = RC522_WriteReg(RC522_REG_T_RELOAD_L, 0xE8U);
+    if (RC522_OK == result)
+        result = RC522_WriteReg(RC522_REG_TX_ASK, 0x40U);
+    if (RC522_OK == result)
+        result = RC522_WriteReg(RC522_REG_MODE, 0x3DU);
+    return result;
+}
+
+static rc522_status_t RC522_CalculateCRC(const uint8_t *data, uint8_t length, uint8_t *crc)
+{
+    rc522_status_t result = RC522_INVALID_ARG;
+    uint8_t irq = 0U;
+    uint32_t remaining = RC522_CRC_POLL_LIMIT;
+    if ((NULL != data) && (NULL != crc) && (0U != length) && s_initialized)
+    {
+        result = RC522_WriteReg(RC522_REG_COMMAND, RC522_CMD_IDLE);
+        if (RC522_OK == result)
+            result = RC522_WriteReg(RC522_REG_DIV_IRQ, RC522_IRQ_CRC);
+        if (RC522_OK == result)
+            result = RC522_UpdateBits(RC522_REG_FIFO_LEVEL, RC522_FIFO_FLUSH, true);
+        if (RC522_OK == result)
+            result = RC522_WriteBuffer(RC522_REG_FIFO_DATA, data, length);
+        if (RC522_OK == result)
+            result = RC522_WriteReg(RC522_REG_COMMAND, RC522_CMD_CRC);
+        while ((RC522_OK == result) && (0UL < remaining))
+        {
+            result = RC522_ReadReg(RC522_REG_DIV_IRQ, &irq);
+            if ((RC522_OK != result) || (0U != (irq & RC522_IRQ_CRC)))
+                break;
+            remaining--;
+        }
+        if (RC522_OK == result)
+        {
+            result = RC522_WriteReg(RC522_REG_COMMAND, RC522_CMD_IDLE);
+            if ((RC522_OK == result) && (0U == (irq & RC522_IRQ_CRC)))
+                result = RC522_TIMEOUT;
+            if (RC522_OK == result)
+                result = RC522_ReadReg(RC522_REG_CRC_L, &crc[0]);
+            if (RC522_OK == result)
+                result = RC522_ReadReg(RC522_REG_CRC_H, &crc[1]);
+        }
+    }
+    else if (!s_initialized)
+    {
+        result = RC522_NOT_READY;
+    }
+    return result;
+}
+
+/** @brief Execute one PICC frame using MFRC522's internal FIFO/IRQ. */
+static rc522_status_t RC522_Transceive(const uint8_t *tx, uint8_t txLength, uint8_t txLastBits,
+                                       uint8_t *rx, uint8_t *rxLength, uint8_t *rxValidBits)
+{
+    rc522_status_t result = RC522_INVALID_ARG;
+    uint8_t irq = 0U;
+    uint8_t error = 0U;
+    uint8_t fifoLength = 0U;
+    uint8_t validBits = 0U;
+    uint32_t remaining = RC522_RF_POLL_LIMIT;
+    if ((NULL != tx) && (0U != txLength) && s_initialized)
+    {
+        result = RC522_WriteReg(RC522_REG_COMMAND, RC522_CMD_IDLE);
+        if (RC522_OK == result)
+            result = RC522_WriteReg(RC522_REG_COM_IRQ, 0x7FU);
+        if (RC522_OK == result)
+            result = RC522_UpdateBits(RC522_REG_FIFO_LEVEL, RC522_FIFO_FLUSH, true);
+        if (RC522_OK == result)
+            result = RC522_WriteBuffer(RC522_REG_FIFO_DATA, tx, txLength);
+        if (RC522_OK == result)
+            result = RC522_WriteReg(RC522_REG_BIT_FRAMING, (uint8_t)(txLastBits & 0x07U));
+        if (RC522_OK == result)
+            result = RC522_WriteReg(RC522_REG_COMMAND, RC522_CMD_TRANSCEIVE);
+        if (RC522_OK == result)
+            result = RC522_UpdateBits(RC522_REG_BIT_FRAMING, RC522_START_SEND, true);
+        while ((RC522_OK == result) && (0UL < remaining))
+        {
+            result = RC522_ReadReg(RC522_REG_COM_IRQ, &irq);
+            if ((RC522_OK != result) || (0U != (irq & RC522_IRQ_WAIT)))
+                break;
+            remaining--;
+        }
+        if (RC522_OK == result)
+            result = RC522_UpdateBits(RC522_REG_BIT_FRAMING, RC522_START_SEND, false);
+        if ((RC522_OK == result) && ((0UL == remaining) || (0U != (irq & RC522_IRQ_TIMER))))
+            result = RC522_TIMEOUT;
+        if (RC522_OK == result)
+            result = RC522_ReadReg(RC522_REG_ERROR, &error);
+        if ((RC522_OK == result) && (0U != (error & RC522_ERROR_COLLISION)))
+            result = RC522_COLLISION;
+        if ((RC522_OK == result) && (0U != (error & RC522_ERROR_CRC)))
+            result = RC522_CRC_ERROR;
+        if ((RC522_OK == result) && (0U != (error & RC522_ERROR_FATAL)))
+            result = RC522_ERROR;
+        if ((RC522_OK == result) && (NULL != rx) && (NULL != rxLength))
+        {
+            result = RC522_ReadReg(RC522_REG_FIFO_LEVEL, &fifoLength);
+            if ((RC522_OK == result) && (*rxLength < fifoLength))
+                result = RC522_NO_ROOM;
+            if ((RC522_OK == result) && (0U < fifoLength))
+                result = RC522_ReadBuffer(RC522_REG_FIFO_DATA, rx, fifoLength);
+            if (RC522_OK == result)
+                *rxLength = fifoLength;
+            if (RC522_OK == result)
+                result = RC522_ReadReg(RC522_REG_CONTROL, &validBits);
+            if ((RC522_OK == result) && (NULL != rxValidBits))
+                *rxValidBits = (uint8_t)(validBits & 0x07U);
+        }
+    }
+    else if (!s_initialized)
+    {
+        result = RC522_NOT_READY;
+    }
+    return result;
+}
+
+static rc522_status_t RC522_RequestA(uint8_t *atqa)
+{
+    const uint8_t request = RC522_PICC_REQA;
+    uint8_t length = 2U;
+    uint8_t bits = 0U;
+    rc522_status_t result = RC522_INVALID_ARG;
+    if (NULL != atqa)
+    {
+        result = RC522_UpdateBits(RC522_REG_COLL, 0x80U, false);
+        if (RC522_OK == result)
+            result = RC522_Transceive(&request, 1U, 7U, atqa, &length, &bits);
+        if ((RC522_OK == result) && ((2U != length) || (0U != bits)))
+            result = RC522_ERROR;
+    }
+    return result;
+}
+
+static rc522_status_t RC522_AntiCollision(uint8_t *uidAndBcc)
+{
+    const uint8_t frame[2] = {RC522_PICC_SEL_CL1, 0x20U};
+    uint8_t length = 5U;
+    uint8_t bits = 0U;
+    uint8_t bcc = 0U;
+    rc522_status_t result = RC522_INVALID_ARG;
+    if (NULL != uidAndBcc)
+    {
+        result = RC522_UpdateBits(RC522_REG_COLL, 0x80U, false);
+        if (RC522_OK == result)
+            result = RC522_Transceive(frame, 2U, 0U, uidAndBcc, &length, &bits);
+        if ((RC522_OK == result) && ((5U != length) || (0U != bits)))
+            result = RC522_ERROR;
+        if (RC522_OK == result)
+        {
+            bcc = (uint8_t)(uidAndBcc[0] ^ uidAndBcc[1] ^ uidAndBcc[2] ^ uidAndBcc[3]);
+            if (bcc != uidAndBcc[4])
+                result = RC522_CRC_ERROR;
+        }
+    }
+    return result;
+}
+
+static rc522_status_t RC522_SelectCL1(const uint8_t *uidAndBcc, uint8_t *sak)
+{
+    uint8_t frame[9] = {RC522_PICC_SEL_CL1, 0x70U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
+    uint8_t response[3] = {0U};
+    uint8_t crc[2] = {0U};
+    uint8_t length = 3U;
+    uint8_t bits = 0U;
+    uint8_t i = 0U;
+    rc522_status_t result = RC522_INVALID_ARG;
+    if ((NULL != uidAndBcc) && (NULL != sak))
+    {
+        for (i = 0U; i < 5U; i++)
+            frame[i + 2U] = uidAndBcc[i];
+        result = RC522_CalculateCRC(frame, 7U, &frame[7]);
+        if (RC522_OK == result)
+            result = RC522_Transceive(frame, 9U, 0U, response, &length, &bits);
+        if ((RC522_OK == result) && ((3U != length) || (0U != bits)))
+            result = RC522_ERROR;
+        if (RC522_OK == result)
+            result = RC522_CalculateCRC(response, 1U, crc);
+        if ((RC522_OK == result) && ((crc[0] != response[1]) || (crc[1] != response[2])))
+            result = RC522_CRC_ERROR;
+        if (RC522_OK == result)
+        {
+            *sak = response[0];
+            if (0U != (*sak & 0x04U))
+                result = RC522_ERROR; /* UID needs CL2. */
+        }
+    }
+    return result;
+}
+
+bool RC522_PCD_Init(uint8_t csPin, uint8_t resetPin)
+{
+    bool success = false;
+    uint8_t version = RC522_VERSION_INVALID;
+    rc522_status_t result = RC522_NOT_READY;
+    s_initialized = false;
+    s_pinsReady = false;
+    if (RC522_ValidPins(csPin, resetPin))
+    {
+        /* Put CS HIGH before any SPI clock or profile change. */
+        s_csPin = csPin;
+        s_resetPin = resetPin;
+        pinMode(s_csPin, OUTPUT);
+        pinMode(s_resetPin, OUTPUT);
+        digitalWrite(s_csPin, HIGH);
+        digitalWrite(s_resetPin, HIGH);
+        s_lastSpi = SPI_beginTransaction(&s_spiSettings);
+        if (SPI_STATUS_OK == s_lastSpi)
+        {
+            s_lastSpi = SPI_endTransaction();
+            if (SPI_STATUS_OK == s_lastSpi)
+            {
+                s_pinsReady = true;
+                if (RC522_PCD_Reset())
+                {
+                    result = RC522_ApplyDefaults();
+                    if (RC522_OK == result)
+                        result = RC522_UpdateBits(RC522_REG_TX_CONTROL, RC522_ANTENNA_MASK, true);
+                    if (RC522_OK == result)
+                        result = RC522_ReadReg(RC522_REG_VERSION, &version);
+                    success = (RC522_OK == result) && RC522_ValidVersion(version);
+                }
+            }
         }
     }
     else
     {
-        bInitialized = false;
+        s_lastSpi = SPI_STATUS_INVALID_ARG;
     }
-
-    return bInitialized;
+    s_initialized = success;
+    return success;
 }
 
 bool RC522_PCD_Reset(void)
 {
-    bool bResetCompleted = false;
-
-    uint32_t u32Timeout =
-        RC522_RESET_TIMEOUT_COUNT;
-
-    uint8_t u8Command = 0U;
-
-    /*
-     * A raw reset invalidates the active configuration.
-     */
-    s_bRc522Initialized = false;
-
-    if (true == s_bRc522PinsConfigured)
+    bool success = false;
+    uint8_t command = 0U;
+    uint32_t remaining = RC522_RESET_POLL_LIMIT;
+    rc522_status_t result = RC522_NOT_READY;
+    s_initialized = false;
+    if (s_pinsReady)
     {
-        RC522_Deselect();
-
-        digitalWrite(s_u8Rc522ResetPin,
-                     LOW);
-
-        delay(RC522_HARD_RESET_LOW_DELAY_MS);
-
-        digitalWrite(s_u8Rc522ResetPin,
-                     HIGH);
-
-        delay(
-            RC522_HARD_RESET_STARTUP_DELAY_MS);
-
-        RC522_WriteRegister(
-            RC522_REG_COMMAND,
-            RC522_COMMAND_SOFT_RESET);
-
-        delay(RC522_SOFT_RESET_DELAY_MS);
-
-        do
+        digitalWrite(s_csPin, HIGH);
+        digitalWrite(s_resetPin, LOW);
+        delay(2U);
+        digitalWrite(s_resetPin, HIGH);
+        delay(50U);
+        result = RC522_WriteReg(RC522_REG_COMMAND, RC522_CMD_RESET);
+        if (RC522_OK == result)
+            delay(1U);
+        while ((RC522_OK == result) && (0UL < remaining))
         {
-            u8Command =
-                RC522_ReadRegister(
-                    RC522_REG_COMMAND);
-
-            u32Timeout--;
-        } while ((0U !=
-                  (u8Command &
-                   RC522_COMMAND_POWER_DOWN_MASK)) &&
-                 (0UL != u32Timeout));
-
-        if (0UL != u32Timeout)
-        {
-            RC522_WriteRegister(
-                RC522_REG_COMMAND,
-                RC522_COMMAND_IDLE);
-
-            bResetCompleted = true;
+            result = RC522_ReadReg(RC522_REG_COMMAND, &command);
+            if ((RC522_OK != result) || (0U == (command & 0x10U)))
+                break;
+            remaining--;
         }
-        else
+        if ((RC522_OK == result) && (0U == (command & 0x10U)))
         {
-            bResetCompleted = false;
+            result = RC522_WriteReg(RC522_REG_COMMAND, RC522_CMD_IDLE);
+            success = (RC522_OK == result);
         }
     }
-    else
-    {
-        bResetCompleted = false;
-    }
-
-    return bResetCompleted;
+    return success;
 }
 
 void RC522_PCD_AntennaOn(void)
 {
-    uint8_t u8Value = 0U;
-
-    if (true == s_bRc522PinsConfigured)
-    {
-        u8Value =
-            RC522_ReadRegister(
-                RC522_REG_TX_CONTROL);
-
-        if (RC522_TX_CONTROL_ANTENNA_MASK !=
-            (u8Value &
-             RC522_TX_CONTROL_ANTENNA_MASK))
-        {
-            RC522_SetRegisterBitMask(
-                RC522_REG_TX_CONTROL,
-                RC522_TX_CONTROL_ANTENNA_MASK);
-        }
-        else
-        {
-            /* Antenna is already enabled. */
-        }
-    }
-    else
-    {
-        /* Control pins are not configured. */
-    }
-
-    return;
+    if (s_initialized)
+        (void)RC522_UpdateBits(RC522_REG_TX_CONTROL, RC522_ANTENNA_MASK, true);
 }
 
 void RC522_PCD_AntennaOff(void)
 {
-    if (true == s_bRc522PinsConfigured)
-    {
-        RC522_ClearRegisterBitMask(
-            RC522_REG_TX_CONTROL,
-            RC522_TX_CONTROL_ANTENNA_MASK);
-    }
-    else
-    {
-        /* Control pins are not configured. */
-    }
-
-    return;
+    if (s_initialized)
+        (void)RC522_UpdateBits(RC522_REG_TX_CONTROL, RC522_ANTENNA_MASK, false);
 }
 
 uint8_t RC522_PCD_GetVersion(void)
 {
-    uint8_t u8Version =
-        RC522_VERSION_INVALID;
-
-    if (true == s_bRc522Initialized)
-    {
-        u8Version =
-            RC522_ReadRegister(
-                RC522_REG_VERSION);
-    }
-    else
-    {
-        u8Version =
-            RC522_VERSION_INVALID;
-    }
-
-    return u8Version;
+    uint8_t version = RC522_VERSION_INVALID;
+    if (s_initialized && (RC522_OK != RC522_ReadReg(RC522_REG_VERSION, &version)))
+        version = RC522_VERSION_INVALID;
+    return version;
 }
 
 bool RC522_PCD_IsInitialized(void)
 {
-    return s_bRc522Initialized;
+    return s_initialized;
 }
 
-/* ========================================================================= */
-/* Public PICC API                                                           */
-/* ========================================================================= */
+SPI_Status_t RC522_PCD_GetLastSpiStatus(void)
+{
+    return s_lastSpi;
+}
 
 bool RC522_PICC_IsNewCardPresent(void)
 {
-    bool bCardPresent = false;
-
-    uint8_t au8Atqa[RC522_ATQA_SIZE] = {0U};
-
-    if (true == s_bRc522Initialized)
-    {
-        if (RC522_STATUS_OK ==
-            RC522_RequestA(au8Atqa))
-        {
-            bCardPresent = true;
-        }
-        else
-        {
-            bCardPresent = false;
-        }
-    }
-    else
-    {
-        bCardPresent = false;
-    }
-
-    return bCardPresent;
+    uint8_t atqa[2] = {0U};
+    return s_initialized && (RC522_OK == RC522_RequestA(atqa));
 }
 
-bool RC522_PICC_ReadCardSerial(
-    rc522_uid_t *pUid)
+bool RC522_PICC_ReadCardSerial(rc522_uid_t *uid)
 {
-    bool bUidRead = false;
-
-    rc522_status_t Status =
-        RC522_STATUS_OK;
-
-    uint8_t au8UidAndBcc[RC522_ANTICOLLISION_SIZE] =
-        {
-            0U};
-
-    uint8_t u8Sak = 0U;
-    uint8_t u8Index = 0U;
-
-    if (((rc522_uid_t *)0 != pUid) &&
-        (true == s_bRc522Initialized))
+    bool success = false;
+    uint8_t block[5] = {0U};
+    uint8_t sak = 0U;
+    uint8_t i = 0U;
+    rc522_status_t result = RC522_NOT_READY;
+    if (NULL != uid)
     {
-        /*
-         * Clear output fields before attempting communication.
-         */
-        for (u8Index = 0U;
-             u8Index < RC522_UID_MAX_SIZE;
-             u8Index++)
+        for (i = 0U; i < RC522_UID_MAX_SIZE; i++)
+            uid->bytes[i] = 0U;
+        uid->size = 0U;
+        uid->sak = 0U;
+        if (s_initialized)
         {
-            pUid->bytes[u8Index] = 0U;
-        }
-
-        pUid->size = 0U;
-        pUid->sak = 0U;
-
-        Status =
-            RC522_AntiCollisionCL1(
-                au8UidAndBcc);
-
-        if (RC522_STATUS_OK == Status)
-        {
-            Status =
-                RC522_SelectCL1(
-                    au8UidAndBcc,
-                    &u8Sak);
-        }
-        else
-        {
-            /* Anti-collision failed. */
-        }
-
-        if (RC522_STATUS_OK == Status)
-        {
-            for (u8Index = 0U;
-                 u8Index <
-                 RC522_UID_SINGLE_SIZE;
-                 u8Index++)
+            result = RC522_AntiCollision(block);
+            if (RC522_OK == result)
+                result = RC522_SelectCL1(block, &sak);
+            if (RC522_OK == result)
             {
-                pUid->bytes[u8Index] =
-                    au8UidAndBcc[u8Index];
+                for (i = 0U; i < RC522_UID_SINGLE_SIZE; i++)
+                    uid->bytes[i] = block[i];
+                uid->size = RC522_UID_SINGLE_SIZE;
+                uid->sak = sak;
+                success = true;
             }
-
-            pUid->size =
-                RC522_UID_SINGLE_SIZE;
-
-            pUid->sak = u8Sak;
-
-            bUidRead = true;
-        }
-        else
-        {
-            bUidRead = false;
         }
     }
-    else
-    {
-        bUidRead = false;
-    }
-
-    return bUidRead;
+    return success;
 }
 
 void RC522_PICC_HaltA(void)
 {
-    rc522_status_t Status =
-        RC522_STATUS_OK;
-
-    uint8_t au8Frame[RC522_HALT_FRAME_SIZE] =
-        {
-            RC522_PICC_COMMAND_HLTA,
-            0x00U,
-            0x00U,
-            0x00U};
-
-    if (true == s_bRc522Initialized)
+    uint8_t frame[4] = {RC522_PICC_HLTA, 0x00U, 0x00U, 0x00U};
+    if (s_initialized && (RC522_OK == RC522_CalculateCRC(frame, 2U, &frame[2])))
     {
-        Status = RC522_CalculateCRC(
-            au8Frame,
-            2U,
-            &au8Frame[2U]);
-
-        if (RC522_STATUS_OK == Status)
-        {
-            /*
-             * A correctly halted PICC does not return a normal response.
-             * The resulting transceive timeout is intentionally ignored.
-             */
-            (void)RC522_Transceive(
-                au8Frame,
-                RC522_HALT_FRAME_SIZE,
-                RC522_FULL_BYTE_VALID_BITS,
-                (uint8_t *)0,
-                (uint8_t *)0,
-                (uint8_t *)0);
-        }
-        else
-        {
-            /* CRC calculation failed. */
-        }
+        /* A correctly halted card produces no response; timeout is normal. */
+        (void)RC522_Transceive(frame, 4U, 0U, NULL, NULL, NULL);
     }
-    else
-    {
-        /* Reader is not initialized. */
-    }
-
-    return;
 }
