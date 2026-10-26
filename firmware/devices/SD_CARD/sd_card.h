@@ -35,6 +35,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "spi.h"
 
 /* ========================================================================= */
 /* Public Constants                                                          */
@@ -137,9 +138,11 @@ typedef struct
  * @brief Initialize the SD card and mount its filesystem.
  *
  * @details
- * The function initializes the SD card in SPI mode using the selected
- * software chip-select pin. After successful card initialization, the
- * FAT filesystem is mounted automatically.
+ * The application must first call SPI_begin(SPI_ROLE_MASTER) exactly once.
+ * This function uses SPI transactions without reinitializing the bus.
+ * It starts at 400 kHz, switches to 4 MHz for block I/O, and mounts FAT.
+ * Other SPI device CS pins must be configured OUTPUT HIGH before calling.
+ * SD_Begin() does not format an unformatted card.
  *
  * @param[in] csPin
  * Digital-capable logical pin connected to the SD card CS signal.
@@ -159,7 +162,7 @@ bool SD_Begin(uint8_t csPin);
  *
  * @details
  * Open filesystem resources are released and the filesystem is unmounted.
- * The SD card must be initialized again with SD_Begin() before further use.
+ * The shared SPI bus is NOT disabled; TFT and RFID remain usable.
  */
 void SD_End(void);
 
@@ -175,6 +178,9 @@ void SD_End(void);
  * The SD card is not initialized.
  */
 bool SD_IsInitialized(void);
+
+/** @brief Last SD SPI transfer/transaction status (not a FatFs error code). */
+SPI_Status_t SD_GetLastSpiStatus(void);
 
 /**
  * @brief Check whether the filesystem is mounted.

@@ -85,8 +85,9 @@ typedef struct
      * @brief LPUART functional clock frequency in Hz.
      *
      * @details
-     * This value must match the clock source selected for the LPUART
-     * peripheral in the driver implementation.
+     * Supported MaaZEDU clock frequencies: 8000000 (SOSC_DIV2) and
+     * 40000000 (SPLL_DIV2). The driver selects the matching PCC source.
+     * Initialize the system clock before calling LPUART_Init().
      */
     uint32_t u32SrcClockHz;
 } LPUART_Config_t;
@@ -122,7 +123,7 @@ typedef void (*LPUART_Callback_t)(void);
  * Initialization successful.
  *
  * @retval LPUART_STATUS_INVALID_ARGUMENT
- * Invalid peripheral base pointer or configuration parameter.
+ * Invalid peripheral, unsupported clock, or unacceptable baud error.
  */
 LPUART_Status_t LPUART_Init(LPUART_Type *pBase, const LPUART_Config_t *pConfig);
 

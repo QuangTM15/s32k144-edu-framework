@@ -61,18 +61,20 @@
  */
 #define LPUART_PCC_CLK_SRC_SOSC_DIV2 (1U)
 
-/**
- * @brief LPUART oversampling ratio register value.
- *
- * @details
- * OSR = 15 means 16x oversampling because the hardware uses OSR + 1.
- */
-#define LPUART_OSR_VALUE (15U)
+/** @brief PCC clock source selection for SPLL_DIV2. */
+#define LPUART_PCC_CLK_SRC_SPLL_DIV2 (6U)
 
-/**
- * @brief Number of samples used by the configured oversampling mode.
- */
-#define LPUART_OVERSAMPLING_COUNT (LPUART_OSR_VALUE + 1U)
+/** @brief Functional clock frequencies of the existing MaaZEDU clock setup. */
+#define LPUART_SOSC_DIV2_HZ (8000000U)
+#define LPUART_SPLL_DIV2_HZ (40000000U)
+
+/** @brief LPUART oversampling and SBR constraints. */
+#define LPUART_OSR_MIN (4U)
+#define LPUART_OSR_MAX (32U)
+#define LPUART_SBR_MAX (8191U)
+
+/** @brief Maximum accepted baud error: 3 percent. */
+#define LPUART_MAX_BAUD_ERROR_PERCENT (3U)
 
 /**
  * @brief Mask used to extract 8-bit received data from DATA register.
@@ -367,7 +369,7 @@ static void LPUART_ConfigPins(LPUART_Type *pBase)
  *
  * @return None.
  */
-static void LPUART_EnableModuleClock(LPUART_Type *pBase)
+static void LPUART_EnableModuleClock(LPUART_Type *pBase, uint32_t u32Pcs)
 {
     uint32_t u32PccIndex = 0U;
     bool bIsValid = true;
@@ -387,19 +389,127 @@ static void LPUART_EnableModuleClock(LPUART_Type *pBase)
 
     if (true == bIsValid)
     {
-        /*
-         * Disable the peripheral clock gate before changing PCS.
-         * PCC clock source should be configured while CGC is disabled.
-         */
         IP_PCC->PCCn[u32PccIndex] &= ~PCC_PCCn_CGC_MASK;
-
-        /* Select SOSC_DIV2_CLK as LPUART functional clock source. */
         IP_PCC->PCCn[u32PccIndex] &= ~PCC_PCCn_PCS_MASK;
-        IP_PCC->PCCn[u32PccIndex] |= PCC_PCCn_PCS(LPUART_PCC_CLK_SRC_SOSC_DIV2);
-
-        /* Enable clock gate for LPUART registers. */
+        IP_PCC->PCCn[u32PccIndex] |= PCC_PCCn_PCS(u32Pcs);
         IP_PCC->PCCn[u32PccIndex] |= PCC_PCCn_CGC_MASK;
     }
+}
+
+/**
+ * @brief Select an already configured board clock without changing SCG.
+ * @details The frequencies are valid for clock.c supplied with MaaZEDU.
+ *          Reject unavailable sources rather than silently using a wrong baud.
+ */
+static LPUART_Status_t LPUART_SelectClock(uint32_t u32ClockHz, uint32_t *pu32Pcs)
+{
+    LPUART_Status_t xStatus = LPUART_STATUS_INVALID_ARGUMENT;
+
+    if (LPUART_NULL_PTR != pu32Pcs)
+    {
+        if ((LPUART_SOSC_DIV2_HZ == u32ClockHz) &&
+            (0U != (IP_SCG->SOSCCSR & SCG_SOSCCSR_SOSCVLD_MASK)) &&
+            (0x00000100U == (IP_SCG->SOSCDIV & 0x00000700U)))
+        {
+            *pu32Pcs = LPUART_PCC_CLK_SRC_SOSC_DIV2;
+            xStatus = LPUART_STATUS_OK;
+        }
+        else if ((LPUART_SPLL_DIV2_HZ == u32ClockHz) &&
+                 (0U != (IP_SCG->SPLLCSR & SCG_SPLLCSR_SPLLVLD_MASK)) &&
+                 (0x00000300U == (IP_SCG->SPLLDIV & 0x00000700U)))
+        {
+            *pu32Pcs = LPUART_PCC_CLK_SRC_SPLL_DIV2;
+            xStatus = LPUART_STATUS_OK;
+        }
+        else
+        {
+            /* Source unavailable or does not match the board clock setup. */
+        }
+    }
+
+    return xStatus;
+}
+
+/**
+ * @brief Find the lowest-error valid OSR/SBR pair using 64-bit arithmetic.
+ * @details Compare exact rational errors, not rounded baud-rate integers.
+ *          Prefer higher oversampling when errors are equal.
+ */
+static LPUART_Status_t LPUART_CalculateBaud(uint32_t u32ClockHz,
+                                            uint32_t u32BaudRate,
+                                            uint32_t *pu32Osr,
+                                            uint32_t *pu32Sbr)
+{
+    LPUART_Status_t xStatus = LPUART_STATUS_INVALID_ARGUMENT;
+    uint32_t u32Osr = 0U;
+    uint32_t u32CandidateSbr = 0U;
+    uint32_t u32BestOsr = 0U;
+    uint32_t u32BestSbr = 0U;
+    uint64_t u64Denominator = 0U;
+    uint64_t u64ActualDenominator = 0U;
+    uint64_t u64Difference = 0U;
+    uint64_t u64BestDifference = 0U;
+    uint64_t u64BestDenominator = 1U;
+    uint64_t u64TargetProduct = 0U;
+
+    if ((0U != u32ClockHz) && (0U != u32BaudRate) &&
+        (LPUART_NULL_PTR != pu32Osr) && (LPUART_NULL_PTR != pu32Sbr))
+    {
+        for (u32Osr = LPUART_OSR_MIN; u32Osr <= LPUART_OSR_MAX; u32Osr++)
+        {
+            u64Denominator = (uint64_t)u32BaudRate * (uint64_t)u32Osr;
+            /* Reject out-of-range divisors before narrowing to uint32_t. */
+            if (((uint64_t)u32ClockHz + (u64Denominator / 2U)) /
+                u64Denominator <= (uint64_t)LPUART_SBR_MAX)
+            {
+                u32CandidateSbr = (uint32_t)(((uint64_t)u32ClockHz +
+                                             (u64Denominator / 2U)) / u64Denominator);
+            }
+            else
+            {
+                u32CandidateSbr = 0U;
+            }
+
+            if ((1U <= u32CandidateSbr) && (LPUART_SBR_MAX >= u32CandidateSbr))
+            {
+                u64ActualDenominator = (uint64_t)u32Osr * (uint64_t)u32CandidateSbr;
+                u64TargetProduct = (uint64_t)u32BaudRate * u64ActualDenominator;
+                if ((uint64_t)u32ClockHz >= u64TargetProduct)
+                {
+                    u64Difference = (uint64_t)u32ClockHz - u64TargetProduct;
+                }
+                else
+                {
+                    u64Difference = u64TargetProduct - (uint64_t)u32ClockHz;
+                }
+
+                if ((0U == u32BestOsr) ||
+                    ((u64Difference * u64BestDenominator) <
+                     (u64BestDifference * u64ActualDenominator)) ||
+                    (((u64Difference * u64BestDenominator) ==
+                      (u64BestDifference * u64ActualDenominator)) &&
+                     (u32Osr > u32BestOsr)))
+                {
+                    u32BestOsr = u32Osr;
+                    u32BestSbr = u32CandidateSbr;
+                    u64BestDifference = u64Difference;
+                    u64BestDenominator = u64ActualDenominator;
+                }
+            }
+        }
+
+        if ((0U != u32BestOsr) &&
+            ((u64BestDifference * 100U) <=
+             ((uint64_t)LPUART_MAX_BAUD_ERROR_PERCENT *
+              (uint64_t)u32BaudRate * u64BestDenominator)))
+        {
+            *pu32Osr = u32BestOsr;
+            *pu32Sbr = u32BestSbr;
+            xStatus = LPUART_STATUS_OK;
+        }
+    }
+
+    return xStatus;
 }
 
 /**
@@ -407,42 +517,52 @@ static void LPUART_EnableModuleClock(LPUART_Type *pBase)
  */
 LPUART_Status_t LPUART_Init(LPUART_Type *pBase, const LPUART_Config_t *pConfig)
 {
-    LPUART_Status_t xStatus = LPUART_STATUS_OK;
+    LPUART_Status_t xStatus = LPUART_STATUS_INVALID_ARGUMENT;
+    uint32_t u32Osr = 0U;
     uint32_t u32Sbr = 0U;
+    uint32_t u32Pcs = 0U;
+    uint32_t u32BaudRegister = 0U;
     uint8_t u8InstanceIndex = LPUART_INSTANCE_INVALID;
 
-    if ((LPUART_NULL_PTR == pBase) || (LPUART_NULL_PTR == pConfig))
+    if ((LPUART_NULL_PTR != pBase) && (LPUART_NULL_PTR != pConfig) &&
+        (true == LPUART_IsSupportedInstance(pBase)) &&
+        (0U != pConfig->u32BaudRate))
     {
-        xStatus = LPUART_STATUS_INVALID_ARGUMENT;
-    }
-    else if (false == LPUART_IsSupportedInstance(pBase))
-    {
-        xStatus = LPUART_STATUS_INVALID_ARGUMENT;
-    }
-    else if ((0U == pConfig->u32BaudRate) || (0U == pConfig->u32SrcClockHz))
-    {
-        xStatus = LPUART_STATUS_INVALID_ARGUMENT;
-    }
-    else
-    {
-        LPUART_ConfigPins(pBase);
-        LPUART_EnableModuleClock(pBase);
+        xStatus = LPUART_SelectClock(pConfig->u32SrcClockHz, &u32Pcs);
 
-        pBase->CTRL &= ~(LPUART_CTRL_TE_MASK | LPUART_CTRL_RE_MASK);
+        if (LPUART_STATUS_OK == xStatus)
+        {
+            xStatus = LPUART_CalculateBaud(pConfig->u32SrcClockHz,
+                                          pConfig->u32BaudRate,
+                                          &u32Osr, &u32Sbr);
+        }
 
-        u32Sbr = pConfig->u32SrcClockHz /
-                 (pConfig->u32BaudRate * LPUART_OVERSAMPLING_COUNT);
+        if (LPUART_STATUS_OK == xStatus)
+        {
+            LPUART_ConfigPins(pBase);
+            LPUART_EnableModuleClock(pBase, u32Pcs);
+            pBase->CTRL &= ~(LPUART_CTRL_TE_MASK | LPUART_CTRL_RE_MASK |
+                             LPUART_CTRL_RIE_MASK);
 
-        pBase->BAUD &= ~(LPUART_BAUD_OSR_MASK | LPUART_BAUD_SBR_MASK);
-        pBase->BAUD |= LPUART_BAUD_OSR(LPUART_OSR_VALUE) | LPUART_BAUD_SBR(u32Sbr);
+            u32BaudRegister = pBase->BAUD;
+            u32BaudRegister &= ~(LPUART_BAUD_OSR_MASK |
+                                 LPUART_BAUD_SBR_MASK |
+                                 LPUART_BAUD_BOTHEDGE_MASK);
+            u32BaudRegister |= LPUART_BAUD_OSR(u32Osr - 1U) |
+                               LPUART_BAUD_SBR(u32Sbr);
+            if (u32Osr <= 7U)
+            {
+                u32BaudRegister |= LPUART_BAUD_BOTHEDGE_MASK;
+            }
+            pBase->BAUD = u32BaudRegister;
 
-        pBase->CTRL |= (LPUART_CTRL_TE_MASK | LPUART_CTRL_RE_MASK);
+            u8InstanceIndex = LPUART_GetInstanceIndex(pBase);
+            s_axRxBuffer[u8InstanceIndex].u8Head = 0U;
+            s_axRxBuffer[u8InstanceIndex].u8Tail = 0U;
+            s_apfRxCallback[u8InstanceIndex] = LPUART_NULL_CALLBACK;
 
-        u8InstanceIndex = LPUART_GetInstanceIndex(pBase);
-
-        s_axRxBuffer[u8InstanceIndex].u8Head = 0U;
-        s_axRxBuffer[u8InstanceIndex].u8Tail = 0U;
-        s_apfRxCallback[u8InstanceIndex] = LPUART_NULL_CALLBACK;
+            pBase->CTRL |= (LPUART_CTRL_TE_MASK | LPUART_CTRL_RE_MASK);
+        }
     }
 
     return xStatus;

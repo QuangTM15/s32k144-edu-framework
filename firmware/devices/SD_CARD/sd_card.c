@@ -1,64 +1,27 @@
 /**
  * @file sd_card.c
- * @brief SD card device library implementation.
- *
- * @details
- * This implementation provides:
- *
- * - GPIO-based software chip-select.
- * - SPI-mode SD card initialization.
- * - SD version and addressing detection.
- * - Single-block read using CMD17.
- * - Single-block write using CMD24.
- *
- * Filesystem management is intentionally not implemented here.
+ * @brief SD SPI-mode block driver and FatFs-backed storage API.
+ * @details Shared LPSPI0 transactions: SD initialization at 400 kHz,
+ * data at 4 MHz, Mode 0, MSB-first, 8-bit. No SPI_begin/ SPI_end here.
+ * Caller must initialize the shared master bus before SD_Begin().
+ * All operations are blocking, single-context, not ISR/RTOS safe.
  */
-
 #include "sd_card.h"
-
 #include "Arduino.h"
 #include "arduino_pins.h"
 #include "spi.h"
-
 #include "ff.h"
-
+#include <stddef.h>
 #include <string.h>
 
-/* ========================================================================= */
-/* Private Constants                                                         */
-/* ========================================================================= */
-
-/* ------------------------------------------------------------------------- */
-/* Filesystem configuration                                                  */
-/* ------------------------------------------------------------------------- */
-
 #define SD_MAX_OPEN_FILES (4U)
-
 #define SD_MAX_OPEN_DIRECTORIES (2U)
-
 #define SD_LINE_ENDING "\r\n"
-
 #define SD_LINE_ENDING_LENGTH (2U)
-
-/* ------------------------------------------------------------------------- */
-/* SPI configuration                                                         */
-/* ------------------------------------------------------------------------- */
-
 #define SD_SPI_INITIAL_FREQUENCY_HZ (400000UL)
 #define SD_SPI_OPERATING_FREQUENCY_HZ (4000000UL)
-
 #define SD_SPI_DUMMY_BYTE (0xFFU)
-
-/*
- * Ten dummy bytes provide 80 clock cycles, exceeding the minimum
- * startup clock requirement before CMD0.
- */
 #define SD_STARTUP_DUMMY_BYTES (10U)
-
-/* ------------------------------------------------------------------------- */
-/* SD commands                                                               */
-/* ------------------------------------------------------------------------- */
-
 #define SD_CMD0_GO_IDLE_STATE (0U)
 #define SD_CMD8_SEND_IF_COND (8U)
 #define SD_CMD16_SET_BLOCKLEN (16U)
@@ -66,679 +29,376 @@
 #define SD_CMD24_WRITE_SINGLE_BLOCK (24U)
 #define SD_CMD55_APP_CMD (55U)
 #define SD_CMD58_READ_OCR (58U)
-
 #define SD_ACMD41_SEND_OP_COND (41U)
-
-/* ------------------------------------------------------------------------- */
-/* Command arguments                                                         */
-/* ------------------------------------------------------------------------- */
-
 #define SD_CMD0_ARGUMENT (0x00000000UL)
-
 #define SD_CMD8_ARGUMENT (0x000001AAUL)
-
 #define SD_ACMD41_HCS_ARGUMENT (0x40000000UL)
-
 #define SD_CMD58_ARGUMENT (0x00000000UL)
-
-#define SD_CMD16_BLOCK_LENGTH_ARGUMENT \
-    ((uint32_t)SD_BLOCK_SIZE)
-
-/* ------------------------------------------------------------------------- */
-/* Command CRC                                                               */
-/* ------------------------------------------------------------------------- */
-
+#define SD_CMD16_BLOCK_LENGTH_ARGUMENT ((uint32_t)SD_BLOCK_SIZE)
 #define SD_CMD0_CRC (0x95U)
 #define SD_CMD8_CRC (0x87U)
-
 #define SD_DEFAULT_CRC (0x01U)
-
-/* ------------------------------------------------------------------------- */
-/* R1 response values                                                        */
-/* ------------------------------------------------------------------------- */
-
 #define SD_R1_READY_STATE (0x00U)
 #define SD_R1_IDLE_STATE (0x01U)
-
 #define SD_R1_ILLEGAL_COMMAND_MASK (0x04U)
-
-/* ------------------------------------------------------------------------- */
-/* CMD8 response                                                             */
-/* ------------------------------------------------------------------------- */
-
-#define SD_CMD8_RESPONSE_SIZE (4U)
-
-#define SD_CMD8_VOLTAGE_ACCEPTED (0x01U)
-#define SD_CMD8_CHECK_PATTERN (0xAAU)
-
-/* ------------------------------------------------------------------------- */
-/* OCR response                                                              */
-/* ------------------------------------------------------------------------- */
-
-#define SD_OCR_RESPONSE_SIZE (4U)
-
-#define SD_OCR_CCS_MASK (0x40U)
-
-/* ------------------------------------------------------------------------- */
-/* Data tokens                                                               */
-/* ------------------------------------------------------------------------- */
-
 #define SD_DATA_START_BLOCK_TOKEN (0xFEU)
-
 #define SD_DATA_RESPONSE_MASK (0x1FU)
 #define SD_DATA_RESPONSE_ACCEPTED (0x05U)
+#define SD_COMMAND_RESPONSE_TIMEOUT_COUNT (16U)
+#define SD_CMD0_RETRY_LIMIT (40U)
+#define SD_INITIALIZATION_TIMEOUT_MS (2000UL)
+#define SD_INITIALIZATION_MAX_POLLS (10000UL)
+#define SD_DATA_TOKEN_TIMEOUT_MS (300UL)
+#define SD_DATA_TOKEN_MAX_POLLS (100000UL)
+#define SD_WRITE_BUSY_TIMEOUT_MS (600UL)
+#define SD_WRITE_BUSY_MAX_POLLS (200000UL)
 
-/* ------------------------------------------------------------------------- */
-/* CRC transfer                                                              */
-/* ------------------------------------------------------------------------- */
-
-#define SD_DATA_CRC_SIZE (2U)
-
-/* ------------------------------------------------------------------------- */
-/* Timeouts                                                                  */
-/* ------------------------------------------------------------------------- */
-
-#define SD_COMMAND_RESPONSE_TIMEOUT_COUNT (16UL)
-
-#define SD_INITIALIZATION_TIMEOUT_COUNT (10000UL)
-
-#define SD_DATA_TOKEN_TIMEOUT_COUNT (100000UL)
-
-#define SD_WRITE_BUSY_TIMEOUT_COUNT (200000UL)
-
-/* ========================================================================= */
-/* Private State                                                             */
-/* ========================================================================= */
-
-/**
- * @brief User-selected software chip-select pin.
- */
-static uint8_t s_u8SdCsPin = GPIO0;
-
-/**
- * @brief Complete SD card initialization state.
- */
+static uint8_t s_u8SdCsPin = GPIO6;
+static bool s_bSdPinsConfigured = false;
 static bool s_bSdInitialized = false;
-
-/**
- * @brief Addressing mode used by the initialized card.
- *
- * @details
- * true means CMD17/CMD24 arguments use 512-byte logical block numbers.
- * false means command arguments use byte addresses.
- */
 static bool s_bSdBlockAddressing = false;
-
-/**
- * @brief Filesystem mount state.
- */
 static bool s_bSdMounted = false;
-
-/**
- * @brief FatFs filesystem object.
- */
+static SPI_Status_t s_lastSpi = SPI_STATUS_NOT_INIT;
 static FATFS s_sdFileSystem;
-
-/**
- * @brief FatFs file object pool.
- */
 static FIL s_asdFilePool[SD_MAX_OPEN_FILES];
-
-/**
- * @brief File pool allocation state.
- */
 static bool s_abSdFileUsed[SD_MAX_OPEN_FILES] = {false};
-
-/**
- * @brief FatFs directory object pool.
- */
 static DIR s_asdDirectoryPool[SD_MAX_OPEN_DIRECTORIES];
-
-/**
- * @brief Directory pool allocation state.
- */
 static bool s_abSdDirectoryUsed[SD_MAX_OPEN_DIRECTORIES] = {false};
-
-/* Filesystem helpers */
+static const SPI_Settings_t s_initSettings =
+    {SPI_MODE0, SPI_MSBFIRST, SPI_FRAME_SIZE_8, SD_SPI_INITIAL_FREQUENCY_HZ};
+static const SPI_Settings_t s_runSettings =
+    {SPI_MODE0, SPI_MSBFIRST, SPI_FRAME_SIZE_8, SD_SPI_OPERATING_FREQUENCY_HZ};
 
 static void SD_ResetFileSystemState(void);
-
 static bool SD_IsValidFileHandle(const SD_File_t *file);
-
 static bool SD_IsValidDirectoryHandle(const SD_Dir_t *dir);
-
 static bool SD_AllocateFileHandle(SD_File_t *file);
-
 static void SD_ReleaseFileHandle(SD_File_t *file);
-
 static bool SD_AllocateDirectoryHandle(SD_Dir_t *dir);
-
 static void SD_ReleaseDirectoryHandle(SD_Dir_t *dir);
-
 static BYTE SD_GetFatFsMode(SD_FileMode_t mode);
-
 static void SD_CopyFileInfo(const FILINFO *pFatInfo, SD_FileInfo_t *pInfo);
 
-/* ========================================================================= */
-/* Private Function Prototypes                                               */
-/* ========================================================================= */
-
-/* GPIO and validation */
-
-static bool SD_IsValidCsPin(uint8_t csPin);
-
-static void SD_Select(void);
-
-static void SD_Deselect(void);
-
-/* SPI communication */
-
-static uint8_t SD_Transfer(uint8_t data);
-
-static void SD_SendStartupClocks(void);
-
-/* Command communication */
-
-static uint8_t SD_SendCommand(uint8_t command, uint32_t argument, uint8_t crc);
-
-static bool SD_ReadResponseBytes(uint8_t *pBuffer, uint8_t length);
-
-static bool SD_WaitReady(void);
-
-static bool SD_WaitDataToken(uint8_t token);
-
-/* Initialization */
-
-static bool SD_InitializeCard(void);
-
-/* Address conversion */
-
-static uint32_t SD_GetCommandAddress(uint32_t block);
-
-/* ========================================================================= */
-/* GPIO and Validation                                                       */
-/* ========================================================================= */
-
-static bool SD_IsValidCsPin(uint8_t csPin)
+/** @brief Acquire SD settings; do not assert CS on failure. */
+static bool SD_BeginSession(bool initialization)
 {
-    bool bIsValid = false;
-
-    if (ARDUINO_VALID_TRUE ==
-        Arduino_HasDigitalCapability(csPin))
+    bool success = false;
+    const SPI_Settings_t *settings = initialization ? &s_initSettings : &s_runSettings;
+    if (true == s_bSdPinsConfigured)
     {
-        bIsValid = true;
-    }
-    else
-    {
-        bIsValid = false;
-    }
-
-    return bIsValid;
-}
-
-static void SD_Select(void)
-{
-    digitalWrite(s_u8SdCsPin, LOW);
-    return;
-}
-
-static void SD_Deselect(void)
-{
-    digitalWrite(s_u8SdCsPin, HIGH);
-    return;
-}
-
-/* ========================================================================= */
-/* SPI Communication                                                         */
-/* ========================================================================= */
-
-static uint8_t SD_Transfer(uint8_t data)
-{
-    uint8_t u8ReceivedData = 0U;
-
-    u8ReceivedData =
-        SPI_transfer(data);
-
-    return u8ReceivedData;
-}
-
-static void SD_SendStartupClocks(void)
-{
-    uint8_t u8Index = 0U;
-
-    SD_Deselect();
-
-    for (u8Index = 0U; u8Index < SD_STARTUP_DUMMY_BYTES; u8Index++)
-    {
-        (void)SD_Transfer(SD_SPI_DUMMY_BYTE);
-    }
-
-    return;
-}
-
-/* ========================================================================= */
-/* Command Communication                                                     */
-/* ========================================================================= */
-
-static uint8_t SD_SendCommand(uint8_t command, uint32_t argument, uint8_t crc)
-{
-    uint8_t u8Response = SD_SPI_DUMMY_BYTE;
-    uint32_t u32Timeout =
-        SD_COMMAND_RESPONSE_TIMEOUT_COUNT;
-
-    /*
-     * Provide one idle byte before the command frame.
-     */
-    (void)SD_Transfer(
-        SD_SPI_DUMMY_BYTE);
-
-    /*
-     * SD SPI command frame:
-     *
-     * Byte 0: 01 + command index
-     * Byte 1: argument[31:24]
-     * Byte 2: argument[23:16]
-     * Byte 3: argument[15:8]
-     * Byte 4: argument[7:0]
-     * Byte 5: CRC7 + end bit
-     */
-    (void)SD_Transfer(
-        (uint8_t)(0x40U | command));
-
-    (void)SD_Transfer(
-        (uint8_t)(argument >> 24U));
-
-    (void)SD_Transfer(
-        (uint8_t)(argument >> 16U));
-
-    (void)SD_Transfer(
-        (uint8_t)(argument >> 8U));
-
-    (void)SD_Transfer(
-        (uint8_t)argument);
-
-    (void)SD_Transfer(crc);
-
-    /*
-     * R1 is valid when bit 7 becomes zero.
-     */
-    do
-    {
-        u8Response =
-            SD_Transfer(
-                SD_SPI_DUMMY_BYTE);
-
-        u32Timeout--;
-
-    } while (((u8Response & 0x80U) != 0U) && (0UL != u32Timeout));
-
-    return u8Response;
-}
-
-static bool SD_ReadResponseBytes(uint8_t *pBuffer, uint8_t length)
-{
-    bool bRead = false;
-    uint8_t u8Index = 0U;
-
-    if (((uint8_t *)0 != pBuffer) &&
-        (0U != length))
-    {
-        for (u8Index = 0U;
-             u8Index < length;
-             u8Index++)
+        s_lastSpi = SPI_beginTransaction(settings);
+        if (SPI_STATUS_OK == s_lastSpi)
         {
-            pBuffer[u8Index] =
-                SD_Transfer(
-                    SD_SPI_DUMMY_BYTE);
+            digitalWrite(s_u8SdCsPin, LOW);
+            success = true;
         }
-
-        bRead = true;
     }
-    else
+    return success;
+}
+
+/** @brief Exchange one byte, detecting hardware failures independently of data. */
+static bool SD_Exchange(uint8_t tx, uint8_t *rx)
+{
+    bool success = false;
+    uint8_t value = SPI_transfer(tx);
+    SPI_Status_t status = SPI_getLastStatus();
+    if (SPI_STATUS_OK == status)
     {
-        bRead = false;
+        if (NULL != rx)
+        {
+            *rx = value;
+        }
+        success = true;
     }
+    else if (SPI_STATUS_OK == s_lastSpi)
+    {
+        s_lastSpi = status;
+    }
+    return success;
+}
 
-    return bRead;
+/** @brief Transfer a data block with the SPI wrapper's 0xFF read dummy. */
+static bool SD_ExchangeBuffer(const uint8_t *tx, uint8_t *rx, uint32_t length)
+{
+    bool success = false;
+    SPI_transferBuffer(tx, rx, length);
+    SPI_Status_t status = SPI_getLastStatus();
+    if (SPI_STATUS_OK == status)
+    {
+        success = true;
+    }
+    else if (SPI_STATUS_OK == s_lastSpi)
+    {
+        s_lastSpi = status;
+    }
+    return success;
+}
+
+/** @brief Eight extra clocks with SD deselected; never select another slave. */
+static bool SD_ClockIdle(bool initialization, uint8_t count)
+{
+    bool success = false;
+    SPI_Status_t firstError = s_lastSpi;
+    const SPI_Settings_t *settings = initialization ? &s_initSettings : &s_runSettings;
+    SPI_Status_t beginStatus = SPI_beginTransaction(settings);
+    if (SPI_STATUS_OK == beginStatus)
+    {
+        uint8_t i = 0U;
+        bool transferred = true;
+        SPI_Status_t transferStatus = SPI_STATUS_OK;
+        for (i = 0U; (i < count) && (true == transferred); i++)
+        {
+            (void)SPI_transfer(SD_SPI_DUMMY_BYTE);
+            transferStatus = SPI_getLastStatus();
+            transferred = (SPI_STATUS_OK == transferStatus);
+        }
+        SPI_Status_t endStatus = SPI_endTransaction();
+        success = transferred && (SPI_STATUS_OK == endStatus);
+        if ((SPI_STATUS_OK == firstError) && (false == success))
+        {
+            s_lastSpi = (SPI_STATUS_OK != transferStatus) ? transferStatus : endStatus;
+        }
+    }
+    else if (SPI_STATUS_OK == firstError)
+    {
+        s_lastSpi = beginStatus;
+    }
+    if (SPI_STATUS_OK != firstError)
+    {
+        s_lastSpi = firstError;
+    }
+    return success;
+}
+
+/** @brief Wait for hardware idle while CS is LOW; then release CS and clock idle. */
+static bool SD_EndSession(bool initialization)
+{
+    bool success = false;
+    SPI_Status_t transferStatus = s_lastSpi;
+    SPI_Status_t endStatus = SPI_endTransaction();
+    digitalWrite(s_u8SdCsPin, HIGH);
+    if ((SPI_STATUS_OK == transferStatus) && (SPI_STATUS_OK != endStatus))
+    {
+        s_lastSpi = endStatus;
+    }
+    /* Keep CS HIGH during the release clocks. */
+    bool idleOk = SD_ClockIdle(initialization, 1U);
+    success = (SPI_STATUS_OK == transferStatus) &&
+              (SPI_STATUS_OK == endStatus) && idleOk;
+    return success;
+}
+
+/** @brief Send a six-byte command and receive its R1 response. CS stays LOW. */
+static bool SD_SendCommand(uint8_t command, uint32_t argument,
+                           uint8_t crc, uint8_t *response)
+{
+    bool success = (NULL != response);
+    uint8_t value = SD_SPI_DUMMY_BYTE;
+    uint8_t i = 0U;
+    uint8_t frame[6] =
+        {
+            (uint8_t)(0x40U | command),
+            (uint8_t)(argument >> 24U),
+            (uint8_t)(argument >> 16U),
+            (uint8_t)(argument >> 8U),
+            (uint8_t)argument,
+            crc};
+    if (true == success)
+    {
+        *response = SD_SPI_DUMMY_BYTE;
+        success = SD_Exchange(SD_SPI_DUMMY_BYTE, NULL);
+    }
+    if (true == success)
+    {
+        success = SD_ExchangeBuffer(frame, NULL, 6U);
+    }
+    for (i = 0U; (i < SD_COMMAND_RESPONSE_TIMEOUT_COUNT) && (true == success); i++)
+    {
+        success = SD_Exchange(SD_SPI_DUMMY_BYTE, &value);
+        if ((true == success) && (0U == (value & 0x80U)))
+        {
+            *response = value;
+            break;
+        }
+    }
+    success = success && (0U == (*response & 0x80U));
+    return success;
+}
+
+/** @brief Read R3/R7 response bytes while CS remains asserted. */
+static bool SD_ReadResponseBytes(uint8_t *buffer, uint8_t length)
+{
+    bool success = (NULL != buffer) && (0U != length);
+    if (true == success)
+    {
+        success = SD_ExchangeBuffer(NULL, buffer, (uint32_t)length);
+    }
+    return success;
 }
 
 static bool SD_WaitReady(void)
 {
-    bool bReady = false;
-
-    uint32_t u32Timeout =
-        SD_WRITE_BUSY_TIMEOUT_COUNT;
-
-    uint8_t u8Response = 0U;
-
-    do
+    bool ready = false;
+    bool valid = true;
+    uint32_t count = 0UL;
+    uint32_t started = millis();
+    uint8_t value = 0U;
+    while ((false == ready) && (true == valid) &&
+           (count < SD_WRITE_BUSY_MAX_POLLS) &&
+           ((uint32_t)(millis() - started) < SD_WRITE_BUSY_TIMEOUT_MS))
     {
-        u8Response =
-            SD_Transfer(
-                SD_SPI_DUMMY_BYTE);
-
-        u32Timeout--;
-
-        if (SD_SPI_DUMMY_BYTE ==
-            u8Response)
-        {
-            bReady = true;
-        }
-        else
-        {
-            bReady = false;
-        }
-
-    } while ((false == bReady) &&
-             (0UL != u32Timeout));
-
-    return bReady;
+        valid = SD_Exchange(SD_SPI_DUMMY_BYTE, &value);
+        ready = valid && (SD_SPI_DUMMY_BYTE == value);
+        count++;
+    }
+    return ready;
 }
 
 static bool SD_WaitDataToken(uint8_t token)
 {
-    bool bTokenReceived = false;
-
-    uint32_t u32Timeout =
-        SD_DATA_TOKEN_TIMEOUT_COUNT;
-
-    uint8_t u8Response = 0U;
-
-    do
+    bool found = false;
+    bool valid = true;
+    uint32_t count = 0UL;
+    uint32_t started = millis();
+    uint8_t value = 0U;
+    while ((false == found) && (true == valid) &&
+           (count < SD_DATA_TOKEN_MAX_POLLS) &&
+           ((uint32_t)(millis() - started) < SD_DATA_TOKEN_TIMEOUT_MS))
     {
-        u8Response =
-            SD_Transfer(
-                SD_SPI_DUMMY_BYTE);
-
-        u32Timeout--;
-
-        if (token == u8Response)
-        {
-            bTokenReceived = true;
-        }
-        else
-        {
-            bTokenReceived = false;
-        }
-
-    } while ((false == bTokenReceived) &&
-             (0UL != u32Timeout));
-
-    return bTokenReceived;
+        valid = SD_Exchange(SD_SPI_DUMMY_BYTE, &value);
+        found = valid && (token == value);
+        count++;
+    }
+    return found;
 }
 
-/* ========================================================================= */
-/* Initialization                                                            */
-/* ========================================================================= */
+/** @brief One complete command transaction, no extra response bytes. */
+static bool SD_Command(uint8_t command, uint32_t argument,
+                       uint8_t crc, uint8_t *response)
+{
+    bool success = SD_BeginSession(true);
+    if (true == success)
+    {
+        success = SD_SendCommand(command, argument, crc, response);
+        success = SD_EndSession(true) && success;
+    }
+    return success;
+}
 
+/** @brief Initialize SD v1/v2 in SPI mode; does not mount FAT. */
 static bool SD_InitializeCard(void)
 {
-    bool bInitialized = false;
-    bool bCmd8Supported = false;
+    bool success = false;
+    bool v2 = false;
+    bool initialized = false;
+    uint8_t r1 = SD_SPI_DUMMY_BYTE;
+    uint8_t r7[4] = {0U};
+    uint8_t ocr[4] = {0U};
+    uint32_t i = 0UL;
+    uint32_t started = 0UL;
 
-    uint8_t u8Response = SD_SPI_DUMMY_BYTE;
-
-    uint8_t au8Cmd8Response[SD_CMD8_RESPONSE_SIZE] =
-        {0U};
-
-    uint8_t au8Ocr[SD_OCR_RESPONSE_SIZE] =
-        {0U};
-
-    uint32_t u32Timeout =
-        SD_INITIALIZATION_TIMEOUT_COUNT;
-
-    /*
-     * Enter SPI mode.
-     */
-    SD_Select();
-
-    u8Response =
-        SD_SendCommand(
-            SD_CMD0_GO_IDLE_STATE,
-            SD_CMD0_ARGUMENT,
-            SD_CMD0_CRC);
-
-    SD_Deselect();
-
-    (void)SD_Transfer(
-        SD_SPI_DUMMY_BYTE);
-
-    if (SD_R1_IDLE_STATE ==
-        u8Response)
+    /* CMD0 can require retries after power-up. */
+    for (i = 0UL; (i < SD_CMD0_RETRY_LIMIT) && (false == success); i++)
     {
-        /*
-         * Check SD version and interface condition.
-         */
-        SD_Select();
-
-        u8Response =
-            SD_SendCommand(
-                SD_CMD8_SEND_IF_COND,
-                SD_CMD8_ARGUMENT,
-                SD_CMD8_CRC);
-
-        if (SD_R1_IDLE_STATE ==
-            u8Response)
+        success = SD_Command(SD_CMD0_GO_IDLE_STATE, SD_CMD0_ARGUMENT,
+                             SD_CMD0_CRC, &r1) &&
+                  (SD_R1_IDLE_STATE == r1);
+        if (SPI_STATUS_OK != s_lastSpi)
         {
-            (void)SD_ReadResponseBytes(
-                au8Cmd8Response,
-                SD_CMD8_RESPONSE_SIZE);
-
-            if ((SD_CMD8_VOLTAGE_ACCEPTED ==
-                 (au8Cmd8Response[2U] & 0x0FU)) &&
-                (SD_CMD8_CHECK_PATTERN ==
-                 au8Cmd8Response[3U]))
-            {
-                bCmd8Supported = true;
-            }
-            else
-            {
-                bCmd8Supported = false;
-            }
-        }
-        else if (0U !=
-                 (u8Response &
-                  SD_R1_ILLEGAL_COMMAND_MASK))
-        {
-            /*
-             * Legacy SDSC card.
-             */
-            bCmd8Supported = false;
-        }
-        else
-        {
-            bCmd8Supported = false;
-        }
-
-        SD_Deselect();
-
-        (void)SD_Transfer(
-            SD_SPI_DUMMY_BYTE);
-
-        /*
-         * Initialize the card using ACMD41.
-         */
-        u32Timeout =
-            SD_INITIALIZATION_TIMEOUT_COUNT;
-
-        do
-        {
-            SD_Select();
-
-            u8Response =
-                SD_SendCommand(
-                    SD_CMD55_APP_CMD,
-                    0UL,
-                    SD_DEFAULT_CRC);
-
-            SD_Deselect();
-
-            (void)SD_Transfer(
-                SD_SPI_DUMMY_BYTE);
-
-            if ((SD_R1_IDLE_STATE ==
-                 u8Response) ||
-                (SD_R1_READY_STATE ==
-                 u8Response))
-            {
-                SD_Select();
-
-                if (true ==
-                    bCmd8Supported)
-                {
-                    u8Response =
-                        SD_SendCommand(
-                            SD_ACMD41_SEND_OP_COND,
-                            SD_ACMD41_HCS_ARGUMENT,
-                            SD_DEFAULT_CRC);
-                }
-                else
-                {
-                    u8Response =
-                        SD_SendCommand(
-                            SD_ACMD41_SEND_OP_COND,
-                            0UL,
-                            SD_DEFAULT_CRC);
-                }
-
-                SD_Deselect();
-
-                (void)SD_Transfer(
-                    SD_SPI_DUMMY_BYTE);
-            }
-            else
-            {
-                /*
-                 * CMD55 failed.
-                 */
-            }
-
-            u32Timeout--;
-
-        } while ((SD_R1_READY_STATE !=
-                  u8Response) &&
-                 (0UL != u32Timeout));
-
-        if (SD_R1_READY_STATE ==
-            u8Response)
-        {
-            /*
-             * Read OCR and determine addressing mode.
-             */
-            SD_Select();
-
-            u8Response =
-                SD_SendCommand(
-                    SD_CMD58_READ_OCR,
-                    SD_CMD58_ARGUMENT,
-                    SD_DEFAULT_CRC);
-
-            if (SD_R1_READY_STATE ==
-                u8Response)
-            {
-                (void)SD_ReadResponseBytes(
-                    au8Ocr,
-                    SD_OCR_RESPONSE_SIZE);
-
-                if ((true ==
-                     bCmd8Supported) &&
-                    (0U !=
-                     (au8Ocr[0U] &
-                      SD_OCR_CCS_MASK)))
-                {
-                    s_bSdBlockAddressing = true;
-                }
-                else
-                {
-                    s_bSdBlockAddressing = false;
-                }
-
-                bInitialized = true;
-            }
-            else
-            {
-                bInitialized = false;
-            }
-
-            SD_Deselect();
-
-            (void)SD_Transfer(
-                SD_SPI_DUMMY_BYTE);
-        }
-        else
-        {
-            bInitialized = false;
-        }
-
-        /*
-         * Byte-addressed cards require the block length to be
-         * explicitly configured to 512 bytes.
-         */
-        if ((true == bInitialized) &&
-            (false ==
-             s_bSdBlockAddressing))
-        {
-            SD_Select();
-
-            u8Response =
-                SD_SendCommand(
-                    SD_CMD16_SET_BLOCKLEN,
-                    SD_CMD16_BLOCK_LENGTH_ARGUMENT,
-                    SD_DEFAULT_CRC);
-
-            SD_Deselect();
-
-            (void)SD_Transfer(
-                SD_SPI_DUMMY_BYTE);
-
-            if (SD_R1_READY_STATE !=
-                u8Response)
-            {
-                bInitialized = false;
-            }
-            else
-            {
-                /*
-                 * 512-byte block length configured.
-                 */
-            }
-        }
-        else
-        {
-            /*
-             * Block-addressed cards use a fixed 512-byte block size.
-             */
+            break;
         }
     }
-    else
+    if (true == success)
     {
-        bInitialized = false;
+        success = SD_BeginSession(true);
+        if (true == success)
+        {
+            success = SD_SendCommand(SD_CMD8_SEND_IF_COND, SD_CMD8_ARGUMENT,
+                                     SD_CMD8_CRC, &r1);
+            if ((true == success) && (SD_R1_IDLE_STATE == r1))
+            {
+                success = SD_ReadResponseBytes(r7, 4U);
+                v2 = success && (0x01U == (r7[2] & 0x0FU)) && (0xAAU == r7[3]);
+                success = v2;
+            }
+            else if ((true == success) && (0U != (r1 & SD_R1_ILLEGAL_COMMAND_MASK)))
+            {
+                v2 = false; /* SDSC v1. */
+            }
+            else
+            {
+                success = false;
+            }
+            success = SD_EndSession(true) && success;
+        }
     }
-
-    return bInitialized;
+    if (true == success)
+    {
+        started = millis();
+        for (i = 0UL; (i < SD_INITIALIZATION_MAX_POLLS) && (false == initialized) &&
+                      ((uint32_t)(millis() - started) < SD_INITIALIZATION_TIMEOUT_MS);
+             i++)
+        {
+            /* CMD55 + ACMD41 in one CS assertion. */
+            success = SD_BeginSession(true);
+            if (true == success)
+            {
+                success = SD_SendCommand(SD_CMD55_APP_CMD, 0UL,
+                                         SD_DEFAULT_CRC, &r1);
+                success = success && ((SD_R1_IDLE_STATE == r1) ||
+                                      (SD_R1_READY_STATE == r1));
+                if (true == success)
+                {
+                    success = SD_SendCommand(SD_ACMD41_SEND_OP_COND,
+                                             v2 ? SD_ACMD41_HCS_ARGUMENT : 0UL,
+                                             SD_DEFAULT_CRC, &r1);
+                }
+                success = SD_EndSession(true) && success;
+                initialized = success && (SD_R1_READY_STATE == r1);
+            }
+            if ((false == success) || (SPI_STATUS_OK != s_lastSpi))
+            {
+                break;
+            }
+        }
+        success = initialized;
+    }
+    if (true == success)
+    {
+        success = SD_BeginSession(true);
+        if (true == success)
+        {
+            success = SD_SendCommand(SD_CMD58_READ_OCR, SD_CMD58_ARGUMENT,
+                                     SD_DEFAULT_CRC, &r1);
+            success = success && (SD_R1_READY_STATE == r1);
+            if (true == success)
+            {
+                success = SD_ReadResponseBytes(ocr, 4U);
+                /* OCR power-up complete bit 31; CCS bit 30. */
+                success = success && (0U != (ocr[0] & 0x80U));
+                s_bSdBlockAddressing = v2 && (0U != (ocr[0] & 0x40U));
+            }
+            success = SD_EndSession(true) && success;
+        }
+    }
+    if ((true == success) && (false == s_bSdBlockAddressing))
+    {
+        success = SD_Command(SD_CMD16_SET_BLOCKLEN,
+                             SD_CMD16_BLOCK_LENGTH_ARGUMENT,
+                             SD_DEFAULT_CRC, &r1) &&
+                  (SD_R1_READY_STATE == r1);
+    }
+    return success;
 }
-
-/* ========================================================================= */
-/* Address Conversion                                                        */
-/* ========================================================================= */
 
 static uint32_t SD_GetCommandAddress(uint32_t block)
 {
-    uint32_t u32Address = 0UL;
-
-    if (true ==
-        s_bSdBlockAddressing)
+    uint32_t address = block;
+    if (false == s_bSdBlockAddressing)
     {
-        u32Address = block;
+        address = block * (uint32_t)SD_BLOCK_SIZE;
     }
-    else
-    {
-        u32Address =
-            block *
-            ((uint32_t)SD_BLOCK_SIZE);
-    }
-
-    return u32Address;
+    return address;
 }
 
 /* ========================================================================= */
@@ -985,52 +645,44 @@ static void SD_CopyFileInfo(
 /* ========================================================================= */
 bool SD_Begin(uint8_t csPin)
 {
-    bool bInitialized = false;
-    s_bSdInitialized = false;
-    s_bSdBlockAddressing = false;
-    SD_ResetFileSystemState();
-    if (true ==
-        SD_IsValidCsPin(csPin))
+    bool initialized = false;
+    if ((ARDUINO_VALID_TRUE == Arduino_HasDigitalCapability(csPin)) &&
+        (false == SPI_isTransactionActive()))
     {
+        /* Reinitialization closes our resources, but NEVER stops the SPI bus. */
+        SD_End();
+        SD_ResetFileSystemState();
         s_u8SdCsPin = csPin;
-        pinMode(s_u8SdCsPin,
-                OUTPUT);
-        SD_Deselect();
-        SPI_beginEx(
-            SPI_ROLE_MASTER,
-            SD_SPI_INITIAL_FREQUENCY_HZ,
-            SPI_MODE0,
-            SPI_MSBFIRST);
-        SD_SendStartupClocks();
-        bInitialized =
-            SD_InitializeCard();
-        if (true ==
-            bInitialized)
+        s_bSdPinsConfigured = true;
+        s_bSdBlockAddressing = false;
+        s_lastSpi = SPI_STATUS_OK;
+        pinMode(s_u8SdCsPin, OUTPUT);
+        digitalWrite(s_u8SdCsPin, HIGH);
+        /* At least 74 clocks while ALL device chip-selects remain HIGH. */
+        initialized = SD_ClockIdle(true, SD_STARTUP_DUMMY_BYTES);
+        if (true == initialized)
+        {
+            initialized = SD_InitializeCard();
+        }
+        if (true == initialized)
         {
             s_bSdInitialized = true;
-            SPI_setFrequency(
-                SD_SPI_OPERATING_FREQUENCY_HZ);
-            if (true ==
-                SD_Mount())
-            {
-                bInitialized = true;
-            }
-            else
+            initialized = SD_Mount();
+            if (false == initialized)
             {
                 s_bSdInitialized = false;
-                bInitialized = false;
             }
         }
-        else
-        {
-            s_bSdInitialized = false;
-        }
+    }
+    else if (true == SPI_isTransactionActive())
+    {
+        s_lastSpi = SPI_STATUS_BUSY;
     }
     else
     {
-        bInitialized = false;
+        s_lastSpi = SPI_STATUS_INVALID_ARG;
     }
-    return bInitialized;
+    return initialized;
 }
 
 bool SD_IsInitialized(void)
@@ -1038,48 +690,38 @@ bool SD_IsInitialized(void)
     return s_bSdInitialized;
 }
 
+SPI_Status_t SD_GetLastSpiStatus(void)
+{
+    return s_lastSpi;
+}
+
 void SD_End(void)
 {
-    uint8_t u8Index = 0U;
-
-    for (u8Index = 0U;
-         u8Index < SD_MAX_OPEN_FILES;
-         u8Index++)
+    uint8_t index = 0U;
+    for (index = 0U; index < SD_MAX_OPEN_FILES; index++)
     {
-        if (true ==
-            s_abSdFileUsed[u8Index])
+        if (true == s_abSdFileUsed[index])
         {
-            (void)f_close(
-                &s_asdFilePool[u8Index]);
-
-            s_abSdFileUsed[u8Index] =
-                false;
+            (void)f_close(&s_asdFilePool[index]);
+            s_abSdFileUsed[index] = false;
         }
     }
-
-    for (u8Index = 0U;
-         u8Index < SD_MAX_OPEN_DIRECTORIES;
-         u8Index++)
+    for (index = 0U; index < SD_MAX_OPEN_DIRECTORIES; index++)
     {
-        if (true ==
-            s_abSdDirectoryUsed[u8Index])
+        if (true == s_abSdDirectoryUsed[index])
         {
-            (void)f_closedir(
-                &s_asdDirectoryPool[u8Index]);
-
-            s_abSdDirectoryUsed[u8Index] =
-                false;
+            (void)f_closedir(&s_asdDirectoryPool[index]);
+            s_abSdDirectoryUsed[index] = false;
         }
     }
-
     (void)SD_Unmount();
-
     s_bSdInitialized = false;
     s_bSdBlockAddressing = false;
-
-    SPI_end();
-
-    return;
+    if (true == s_bSdPinsConfigured)
+    {
+        digitalWrite(s_u8SdCsPin, HIGH);
+    }
+    /* The shared SPI bus belongs to the application, not the SD library. */
 }
 
 bool SD_IsMounted(void)
@@ -1089,252 +731,119 @@ bool SD_IsMounted(void)
 
 bool SD_Mount(void)
 {
-    bool bMounted = false;
-    FRESULT result = FR_NOT_READY;
-
-    if (true ==
-        s_bSdInitialized)
+    bool mounted = false;
+    if (true == s_bSdInitialized)
     {
-        result =
-            f_mount(
-                &s_sdFileSystem,
-                "",
-                1U);
-
-        if (FR_OK == result)
-        {
-            s_bSdMounted = true;
-            bMounted = true;
-        }
-        else
-        {
-            s_bSdMounted = false;
-        }
+        FRESULT result = f_mount(&s_sdFileSystem, "", 1U);
+        mounted = (FR_OK == result);
+        s_bSdMounted = mounted;
     }
-
-    return bMounted;
+    return mounted;
 }
 
 bool SD_Unmount(void)
 {
-    bool bUnmounted = false;
-    FRESULT result = FR_NOT_READY;
-
-    if (true ==
-        s_bSdMounted)
+    bool unmounted = true;
+    if (true == s_bSdMounted)
     {
-        result =
-            f_mount(
-                (FATFS *)0,
-                "",
-                0U);
-
-        if (FR_OK == result)
+        unmounted = (FR_OK == f_mount(NULL, "", 0U));
+        if (true == unmounted)
         {
             s_bSdMounted = false;
-            bUnmounted = true;
         }
     }
-    else
-    {
-        bUnmounted = true;
-    }
-
-    return bUnmounted;
+    return unmounted;
 }
 
-bool SD_ReadBlock(uint32_t block,
-                  uint8_t *pBuffer)
+bool SD_ReadBlock(uint32_t block, uint8_t *buffer)
 {
-    bool bRead = false;
-
-    uint8_t u8Response =
-        SD_SPI_DUMMY_BYTE;
-
-    uint16_t u16Index = 0U;
-
-    uint8_t u8CrcIndex = 0U;
-
-    uint32_t u32Address = 0UL;
-
-    if (((uint8_t *)0 != pBuffer) &&
-        (true ==
-         s_bSdInitialized))
+    bool success = (NULL != buffer) && s_bSdInitialized;
+    uint8_t response = SD_SPI_DUMMY_BYTE;
+    uint8_t crc[2] = {0U};
+    if ((true == success) && (false == s_bSdBlockAddressing) &&
+        (block > (UINT32_MAX / SD_BLOCK_SIZE)))
     {
-        u32Address =
-            SD_GetCommandAddress(block);
-
-        SD_Select();
-
-        u8Response =
-            SD_SendCommand(
-                SD_CMD17_READ_SINGLE_BLOCK,
-                u32Address,
-                SD_DEFAULT_CRC);
-
-        if (SD_R1_READY_STATE ==
-            u8Response)
-        {
-            if (true ==
-                SD_WaitDataToken(
-                    SD_DATA_START_BLOCK_TOKEN))
-            {
-                for (u16Index = 0U;
-                     u16Index <
-                     SD_BLOCK_SIZE;
-                     u16Index++)
-                {
-                    pBuffer[u16Index] =
-                        SD_Transfer(
-                            SD_SPI_DUMMY_BYTE);
-                }
-
-                /*
-                 * CRC16 is not currently validated.
-                 * Consume both CRC bytes from the card.
-                 */
-                for (u8CrcIndex = 0U;
-                     u8CrcIndex <
-                     SD_DATA_CRC_SIZE;
-                     u8CrcIndex++)
-                {
-                    (void)SD_Transfer(
-                        SD_SPI_DUMMY_BYTE);
-                }
-
-                bRead = true;
-            }
-            else
-            {
-                bRead = false;
-            }
-        }
-        else
-        {
-            bRead = false;
-        }
-
-        SD_Deselect();
-
-        (void)SD_Transfer(
-            SD_SPI_DUMMY_BYTE);
+        success = false;
     }
-    else
+    if (true == success)
     {
-        bRead = false;
+        success = SD_BeginSession(false);
+        if (true == success)
+        {
+            success = SD_SendCommand(SD_CMD17_READ_SINGLE_BLOCK,
+                                     SD_GetCommandAddress(block),
+                                     SD_DEFAULT_CRC, &response);
+            success = success && (SD_R1_READY_STATE == response);
+            if (true == success)
+            {
+                success = SD_WaitDataToken(SD_DATA_START_BLOCK_TOKEN);
+            }
+            if (true == success)
+            {
+                success = SD_ExchangeBuffer(NULL, buffer, SD_BLOCK_SIZE);
+            }
+            if (true == success)
+            {
+                success = SD_ExchangeBuffer(NULL, crc, 2U);
+            }
+            success = SD_EndSession(false) && success;
+        }
     }
-
-    return bRead;
+    return success;
 }
 
-bool SD_WriteBlock(uint32_t block,
-                   const uint8_t *pBuffer)
+bool SD_WriteBlock(uint32_t block, const uint8_t *buffer)
 {
-    bool bWritten = false;
-
-    uint8_t u8Response =
-        SD_SPI_DUMMY_BYTE;
-
-    uint8_t u8DataResponse =
-        SD_SPI_DUMMY_BYTE;
-
-    uint16_t u16Index = 0U;
-
-    uint32_t u32Address = 0UL;
-
-    if (((const uint8_t *)0 != pBuffer) &&
-        (true ==
-         s_bSdInitialized))
+    bool success = (NULL != buffer) && s_bSdInitialized;
+    uint8_t response = SD_SPI_DUMMY_BYTE;
+    uint8_t dataResponse = SD_SPI_DUMMY_BYTE;
+    if ((true == success) && (false == s_bSdBlockAddressing) &&
+        (block > (UINT32_MAX / SD_BLOCK_SIZE)))
     {
-        u32Address =
-            SD_GetCommandAddress(block);
-
-        SD_Select();
-
-        if (true ==
-            SD_WaitReady())
-        {
-            u8Response =
-                SD_SendCommand(
-                    SD_CMD24_WRITE_SINGLE_BLOCK,
-                    u32Address,
-                    SD_DEFAULT_CRC);
-
-            if (SD_R1_READY_STATE ==
-                u8Response)
-            {
-                /*
-                 * One dummy byte before the data token.
-                 */
-                (void)SD_Transfer(
-                    SD_SPI_DUMMY_BYTE);
-
-                (void)SD_Transfer(
-                    SD_DATA_START_BLOCK_TOKEN);
-
-                for (u16Index = 0U;
-                     u16Index <
-                     SD_BLOCK_SIZE;
-                     u16Index++)
-                {
-                    (void)SD_Transfer(
-                        pBuffer[u16Index]);
-                }
-
-                /*
-                 * Dummy CRC16. CRC checking is disabled in SPI mode
-                 * unless explicitly enabled with CMD59.
-                 */
-                (void)SD_Transfer(
-                    SD_SPI_DUMMY_BYTE);
-
-                (void)SD_Transfer(
-                    SD_SPI_DUMMY_BYTE);
-
-                u8DataResponse =
-                    SD_Transfer(
-                        SD_SPI_DUMMY_BYTE);
-
-                if (SD_DATA_RESPONSE_ACCEPTED ==
-                    (u8DataResponse &
-                     SD_DATA_RESPONSE_MASK))
-                {
-                    if (true ==
-                        SD_WaitReady())
-                    {
-                        bWritten = true;
-                    }
-                    else
-                    {
-                        bWritten = false;
-                    }
-                }
-                else
-                {
-                    bWritten = false;
-                }
-            }
-            else
-            {
-                bWritten = false;
-            }
-        }
-        else
-        {
-            bWritten = false;
-        }
-
-        SD_Deselect();
-
-        (void)SD_Transfer(
-            SD_SPI_DUMMY_BYTE);
+        success = false;
     }
-    else
+    if (true == success)
     {
-        bWritten = false;
+        success = SD_BeginSession(false);
+        if (true == success)
+        {
+            success = SD_WaitReady();
+            if (true == success)
+            {
+                success = SD_SendCommand(SD_CMD24_WRITE_SINGLE_BLOCK,
+                                         SD_GetCommandAddress(block),
+                                         SD_DEFAULT_CRC, &response);
+                success = success && (SD_R1_READY_STATE == response);
+            }
+            if (true == success)
+            {
+                success = SD_Exchange(SD_SPI_DUMMY_BYTE, NULL) &&
+                          SD_Exchange(SD_DATA_START_BLOCK_TOKEN, NULL);
+            }
+            if (true == success)
+            {
+                success = SD_ExchangeBuffer(buffer, NULL, SD_BLOCK_SIZE);
+            }
+            if (true == success)
+            {
+                success = SD_Exchange(SD_SPI_DUMMY_BYTE, NULL) &&
+                          SD_Exchange(SD_SPI_DUMMY_BYTE, NULL);
+            }
+            if (true == success)
+            {
+                success = SD_Exchange(SD_SPI_DUMMY_BYTE, &dataResponse);
+                success = success &&
+                          (SD_DATA_RESPONSE_ACCEPTED ==
+                           (dataResponse & SD_DATA_RESPONSE_MASK));
+            }
+            if (true == success)
+            {
+                success = SD_WaitReady();
+            }
+            success = SD_EndSession(false) && success;
+        }
     }
-
-    return bWritten;
+    return success;
 }
 
 bool SD_Open(SD_File_t *file,
@@ -1727,7 +1236,6 @@ bool SD_Exists(const char *path)
             bExists = true;
         }
     }
-
     return bExists;
 }
 
@@ -1737,7 +1245,6 @@ bool SD_GetInfo(const char *path,
     bool bRead = false;
     FILINFO fatInfo;
     FRESULT result = FR_INVALID_NAME;
-
     if (((const char *)0 != path) &&
         ((SD_FileInfo_t *)0 != info) &&
         (true == s_bSdMounted))
@@ -1746,17 +1253,14 @@ bool SD_GetInfo(const char *path,
             f_stat(
                 path,
                 &fatInfo);
-
         if (FR_OK == result)
         {
             SD_CopyFileInfo(
                 &fatInfo,
                 info);
-
             bRead = true;
         }
     }
-
     return bRead;
 }
 
@@ -1765,7 +1269,6 @@ bool SD_Remove(const char *path)
     bool bRemoved = false;
     FILINFO fileInfo;
     FRESULT result = FR_INVALID_NAME;
-
     if (((const char *)0 != path) &&
         (true == s_bSdMounted))
     {
@@ -1773,7 +1276,6 @@ bool SD_Remove(const char *path)
             f_stat(
                 path,
                 &fileInfo);
-
         if ((FR_OK == result) &&
             (0U ==
              (fileInfo.fattrib &
@@ -1781,14 +1283,12 @@ bool SD_Remove(const char *path)
         {
             result =
                 f_unlink(path);
-
             if (FR_OK == result)
             {
                 bRemoved = true;
             }
         }
     }
-
     return bRemoved;
 }
 
@@ -1797,7 +1297,6 @@ bool SD_Rename(const char *oldPath,
 {
     bool bRenamed = false;
     FRESULT result = FR_INVALID_NAME;
-
     if (((const char *)0 != oldPath) &&
         ((const char *)0 != newPath) &&
         (true == s_bSdMounted))
@@ -1806,13 +1305,11 @@ bool SD_Rename(const char *oldPath,
             f_rename(
                 oldPath,
                 newPath);
-
         if (FR_OK == result)
         {
             bRenamed = true;
         }
     }
-
     return bRenamed;
 }
 
@@ -1820,19 +1317,16 @@ bool SD_Mkdir(const char *path)
 {
     bool bCreated = false;
     FRESULT result = FR_INVALID_NAME;
-
     if (((const char *)0 != path) &&
         (true == s_bSdMounted))
     {
         result =
-            f_mkdir(path);
-
+        f_mkdir(path);
         if (FR_OK == result)
         {
             bCreated = true;
         }
     }
-
     return bCreated;
 }
 
@@ -1841,7 +1335,6 @@ bool SD_Rmdir(const char *path)
     bool bRemoved = false;
     FILINFO fileInfo;
     FRESULT result = FR_INVALID_NAME;
-
     if (((const char *)0 != path) &&
         (true == s_bSdMounted))
     {
@@ -1849,7 +1342,6 @@ bool SD_Rmdir(const char *path)
             f_stat(
                 path,
                 &fileInfo);
-
         if ((FR_OK == result) &&
             (0U !=
              (fileInfo.fattrib &
@@ -1857,14 +1349,12 @@ bool SD_Rmdir(const char *path)
         {
             result =
                 f_unlink(path);
-
             if (FR_OK == result)
             {
                 bRemoved = true;
             }
         }
     }
-
     return bRemoved;
 }
 
@@ -1873,13 +1363,11 @@ bool SD_OpenDir(SD_Dir_t *dir,
 {
     bool bOpened = false;
     FRESULT result = FR_INVALID_NAME;
-
     if (((SD_Dir_t *)0 != dir) &&
         ((const char *)0 != path) &&
         (true == s_bSdMounted))
     {
         dir->handle = SD_INVALID_HANDLE;
-
         if (true ==
             SD_AllocateDirectoryHandle(dir))
         {
@@ -1887,7 +1375,6 @@ bool SD_OpenDir(SD_Dir_t *dir,
                 f_opendir(
                     &s_asdDirectoryPool[dir->handle],
                     path);
-
             if (FR_OK == result)
             {
                 bOpened = true;
@@ -1898,7 +1385,6 @@ bool SD_OpenDir(SD_Dir_t *dir,
             }
         }
     }
-
     return bOpened;
 }
 
@@ -1908,7 +1394,6 @@ bool SD_ReadDir(SD_Dir_t *dir,
     bool bRead = false;
     FILINFO fatInfo;
     FRESULT result = FR_INVALID_OBJECT;
-
     if ((true ==
          SD_IsValidDirectoryHandle(dir)) &&
         ((SD_FileInfo_t *)0 != info))
@@ -1917,18 +1402,15 @@ bool SD_ReadDir(SD_Dir_t *dir,
             f_readdir(
                 &s_asdDirectoryPool[dir->handle],
                 &fatInfo);
-
         if ((FR_OK == result) &&
             ('\0' != fatInfo.fname[0U]))
         {
             SD_CopyFileInfo(
                 &fatInfo,
                 info);
-
             bRead = true;
         }
     }
-
     return bRead;
 }
 
@@ -1936,7 +1418,6 @@ bool SD_RewindDir(SD_Dir_t *dir)
 {
     bool bRewound = false;
     FRESULT result = FR_INVALID_OBJECT;
-
     if (true ==
         SD_IsValidDirectoryHandle(dir))
     {
@@ -1944,13 +1425,11 @@ bool SD_RewindDir(SD_Dir_t *dir)
             f_readdir(
                 &s_asdDirectoryPool[dir->handle],
                 (FILINFO *)0);
-
         if (FR_OK == result)
         {
             bRewound = true;
         }
     }
-
     return bRewound;
 }
 
@@ -1958,22 +1437,18 @@ bool SD_CloseDir(SD_Dir_t *dir)
 {
     bool bClosed = false;
     FRESULT result = FR_INVALID_OBJECT;
-
     if (true ==
         SD_IsValidDirectoryHandle(dir))
     {
         result =
             f_closedir(
                 &s_asdDirectoryPool[dir->handle]);
-
         if (FR_OK == result)
         {
             SD_ReleaseDirectoryHandle(dir);
-
             bClosed = true;
         }
     }
-
     return bClosed;
 }
 
@@ -1981,16 +1456,11 @@ bool SD_GetCapacity(uint64_t *totalBytes,
                     uint64_t *freeBytes)
 {
     bool bRead = false;
-
     DWORD freeClusters = 0UL;
     DWORD totalClusters = 0UL;
-
     FATFS *pFileSystem = (FATFS *)0;
-
     FRESULT result = FR_NOT_READY;
-
     uint64_t u64ClusterSize = 0ULL;
-
     if (((uint64_t *)0 != totalBytes) &&
         ((uint64_t *)0 != freeBytes) &&
         (true == s_bSdMounted))
