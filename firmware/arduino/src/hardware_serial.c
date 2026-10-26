@@ -486,6 +486,59 @@ static bool HardwareSerial_ReadLineInternal(
     return bLineReady;
 }
 
+/**
+ * @brief Transmit multiple binary bytes through LPUART.
+ *
+ * @param[in] pBase Pointer to the LPUART peripheral.
+ * @param[in] pu8Data Pointer to the source data buffer.
+ * @param[in] u32Length Number of bytes to transmit.
+ *
+ * @return Number of bytes submitted for transmission.
+ */
+static uint32_t HardwareSerial_WriteBytesInternal(LPUART_Type *pBase, const uint8_t *pu8Data, uint32_t u32Length)
+{
+    uint32_t u32Index = 0U;
+
+    if ((HARDWARE_SERIAL_NULL_PTR != pBase) && (HARDWARE_SERIAL_NULL_PTR != pu8Data))
+    {
+        for (u32Index = 0U; u32Index < u32Length; u32Index++)
+        {
+            LPUART_WriteChar(pBase, (char)pu8Data[u32Index]);
+        }
+    }
+
+    return u32Index;
+}
+
+/**
+ * @brief Read currently available binary bytes from LPUART.
+ *
+ * @details
+ * This function is non-blocking and preserves binary data,
+ * including null bytes and newline characters.
+ *
+ * @param[in] pBase Pointer to the LPUART peripheral.
+ * @param[out] pu8Buffer Destination buffer.
+ * @param[in] u32MaxLength Maximum number of bytes to read.
+ *
+ * @return Number of bytes copied into the destination buffer.
+ */
+static uint32_t HardwareSerial_ReadBytesInternal(LPUART_Type *pBase, uint8_t *pu8Buffer, uint32_t u32MaxLength)
+{
+    uint32_t u32Count = 0U;
+
+    if ((HARDWARE_SERIAL_NULL_PTR != pBase) && (HARDWARE_SERIAL_NULL_PTR != pu8Buffer))
+    {
+        while ((u32Count < u32MaxLength) && (true == LPUART_IsDataAvailable(pBase)))
+        {
+            pu8Buffer[u32Count] = (uint8_t)LPUART_GetChar(pBase);
+            u32Count++;
+        }
+    }
+
+    return u32Count;
+}
+
 /* ============================================================
  * Serial1 API
  * ============================================================ */
@@ -588,6 +641,22 @@ bool Serial1_readLine(char *pcBuffer, uint32_t u32MaxLength)
         u32MaxLength);
 }
 
+/**
+ * @brief Transmit binary data through Serial1.
+ */
+uint32_t Serial1_writeBytes(const uint8_t *pu8Data, uint32_t u32Length)
+{
+    return HardwareSerial_WriteBytesInternal(IP_LPUART1, pu8Data, u32Length);
+}
+
+/**
+ * @brief Read available binary data from Serial1.
+ */
+uint32_t Serial1_readBytes(uint8_t *pu8Buffer, uint32_t u32MaxLength)
+{
+    return HardwareSerial_ReadBytesInternal(IP_LPUART1, pu8Buffer, u32MaxLength);
+}
+
 /* ============================================================
  * Serial2 API
  * ============================================================ */
@@ -688,4 +757,20 @@ bool Serial2_readLine(char *pcBuffer, uint32_t u32MaxLength)
         &sxSerial2Line,
         pcBuffer,
         u32MaxLength);
+}
+
+/**
+ * @brief Transmit binary data through Serial2.
+ */
+uint32_t Serial2_writeBytes(const uint8_t *pu8Data, uint32_t u32Length)
+{
+    return HardwareSerial_WriteBytesInternal(IP_LPUART2, pu8Data, u32Length);
+}
+
+/**
+ * @brief Read available binary data from Serial2.
+ */
+uint32_t Serial2_readBytes(uint8_t *pu8Buffer, uint32_t u32MaxLength)
+{
+    return HardwareSerial_ReadBytesInternal(IP_LPUART2, pu8Buffer, u32MaxLength);
 }

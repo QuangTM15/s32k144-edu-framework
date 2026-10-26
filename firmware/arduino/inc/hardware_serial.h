@@ -146,6 +146,30 @@ void Serial1_printlnFloat(float f32Value);
  */
 bool Serial1_readLine(char *pcBuffer, uint32_t u32MaxLength);
 
+/**
+ * @brief Transmit a binary data buffer through Serial1.
+ *
+ * @param[in] pu8Data Pointer to the source data buffer.
+ * @param[in] u32Length Number of bytes to transmit.
+ *
+ * @return Number of bytes submitted for transmission.
+ */
+uint32_t Serial1_writeBytes(const uint8_t *pu8Data, uint32_t u32Length);
+
+/**
+ * @brief Read available binary data from Serial1.
+ *
+ * @details
+ * This function is non-blocking and returns immediately
+ * when no more received data is available.
+ *
+ * @param[out] pu8Buffer Destination data buffer.
+ * @param[in] u32MaxLength Maximum number of bytes to read.
+ *
+ * @return Number of bytes copied into the destination buffer.
+ */
+uint32_t Serial1_readBytes(uint8_t *pu8Buffer, uint32_t u32MaxLength);
+
 /* ============================================================
  * Serial2 API
  * ============================================================ */
@@ -247,5 +271,29 @@ void Serial2_printlnFloat(float f32Value);
  * @retval false No complete valid line is available.
  */
 bool Serial2_readLine(char *pcBuffer, uint32_t u32MaxLength);
+
+/**
+ * @brief Transmit binary data through Serial2.
+ *
+ * @param[in] pu8Data Pointer to the source data buffer.
+ * @param[in] u32Length Number of bytes to transmit.
+ *
+ * @return Number of bytes submitted for transmission.
+ */
+uint32_t Serial2_writeBytes(const uint8_t *pu8Data, uint32_t u32Length);
+
+/**
+ * @brief Read available binary data from Serial2.
+ *
+ * @details
+ * This function is non-blocking and preserves all byte values,
+ * including 0x00, 0x0A and 0xFF.
+ *
+ * @param[out] pu8Buffer Destination buffer.
+ * @param[in] u32MaxLength Maximum number of bytes to read.
+ *
+ * @return Number of bytes copied into the destination buffer.
+ */
+uint32_t Serial2_readBytes(uint8_t *pu8Buffer, uint32_t u32MaxLength);
 
 #endif /* HARDWARE_SERIAL_H */
