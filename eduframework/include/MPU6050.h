@@ -1,6 +1,5 @@
 #ifndef MPU6050_H
 #define MPU6050_H
-
 /**
  * @file MPU6050.h
  * @brief MPU6050 device driver for EduFramework.
@@ -28,70 +27,52 @@
  * This module belongs to the EduFramework Device layer and is implemented
  * on top of the Arduino-style Wire and Time APIs.
  */
-
 #include <stdint.h>
 #include <stdbool.h>
-
 /* ============================================================
  * Device Addresses
  * ============================================================ */
-
 /**
  * @brief Default MPU6050 I2C address when AD0 is connected to GND.
  */
 #define MPU6050_ADDRESS_DEFAULT (0x68U)
-
 /**
  * @brief Alternate MPU6050 I2C address when AD0 is connected to VCC.
  */
 #define MPU6050_ADDRESS_ALT (0x69U)
-
 /* ============================================================
  * Accelerometer Range Configuration
  * ============================================================ */
-
 /**
  * @brief Accelerometer range configuration type.
  */
 typedef uint8_t MPU6050_AccelRange_t;
-
 /** @brief Accelerometer range +/-2 g. */
 #define MPU6050_RANGE_2_G (0x00U)
-
 /** @brief Accelerometer range +/-4 g. */
 #define MPU6050_RANGE_4_G (0x08U)
-
 /** @brief Accelerometer range +/-8 g. */
 #define MPU6050_RANGE_8_G (0x10U)
-
 /** @brief Accelerometer range +/-16 g. */
 #define MPU6050_RANGE_16_G (0x18U)
-
 /* ============================================================
  * Gyroscope Range Configuration
  * ============================================================ */
-
 /**
  * @brief Gyroscope range configuration type.
  */
 typedef uint8_t MPU6050_GyroRange_t;
-
 /** @brief Gyroscope range +/-250 degrees per second. */
 #define MPU6050_RANGE_250_DEG (0x00U)
-
 /** @brief Gyroscope range +/-500 degrees per second. */
 #define MPU6050_RANGE_500_DEG (0x08U)
-
 /** @brief Gyroscope range +/-1000 degrees per second. */
 #define MPU6050_RANGE_1000_DEG (0x10U)
-
 /** @brief Gyroscope range +/-2000 degrees per second. */
 #define MPU6050_RANGE_2000_DEG (0x18U)
-
 /* ============================================================
  * Beginner Measurement Structure
  * ============================================================ */
-
 /**
  * @brief MPU6050 measurement data.
  *
@@ -102,21 +83,17 @@ typedef uint8_t MPU6050_GyroRange_t;
  */
 typedef struct
 {
-    float accelX; /**< X-axis acceleration in g. */
-    float accelY; /**< Y-axis acceleration in g. */
-    float accelZ; /**< Z-axis acceleration in g. */
-
-    float gyroX; /**< X-axis angular velocity in deg/s. */
-    float gyroY; /**< Y-axis angular velocity in deg/s. */
-    float gyroZ; /**< Z-axis angular velocity in deg/s. */
-
+    float accelX;      /**< X-axis acceleration in g. */
+    float accelY;      /**< Y-axis acceleration in g. */
+    float accelZ;      /**< Z-axis acceleration in g. */
+    float gyroX;       /**< X-axis angular velocity in deg/s. */
+    float gyroY;       /**< Y-axis angular velocity in deg/s. */
+    float gyroZ;       /**< Z-axis angular velocity in deg/s. */
     float temperature; /**< Internal sensor temperature in Celsius. */
 } MPU_Data_t;
-
 /* ============================================================
  * Beginner API
  * ============================================================ */
-
 /**
  * @brief Initialize the default MPU6050 sensor.
  *
@@ -134,7 +111,6 @@ typedef struct
  * @return true if initialization succeeds; otherwise false.
  */
 bool MPU_Begin(void);
-
 /**
  * @brief Check whether the default MPU6050 sensor is initialized.
  *
@@ -142,7 +118,6 @@ bool MPU_Begin(void);
  * otherwise false.
  */
 bool MPU_IsInitialized(void);
-
 /**
  * @brief Read one complete MPU6050 measurement frame.
  *
@@ -160,7 +135,6 @@ bool MPU_IsInitialized(void);
  * otherwise false.
  */
 bool MPU_ReadData(MPU_Data_t *data);
-
 /**
  * @brief Read acceleration along the X, Y, and Z axes.
  *
@@ -176,7 +150,6 @@ bool MPU_ReadData(MPU_Data_t *data);
  * otherwise false.
  */
 bool MPU_ReadAcceleration(float *x, float *y, float *z);
-
 /**
  * @brief Read angular velocity around the X, Y, and Z axes.
  *
@@ -192,7 +165,6 @@ bool MPU_ReadAcceleration(float *x, float *y, float *z);
  * otherwise false.
  */
 bool MPU_ReadGyroscope(float *x, float *y, float *z);
-
 /**
  * @brief Read the MPU6050 internal temperature.
  *
@@ -209,7 +181,6 @@ bool MPU_ReadGyroscope(float *x, float *y, float *z);
  * sensor temperature and should not be treated as ambient temperature.
  */
 bool MPU_ReadTemperature(float *temperature);
-
 /**
  * @brief Calibrate the default MPU6050 sensor.
  *
@@ -225,11 +196,9 @@ bool MPU_ReadTemperature(float *temperature);
  * otherwise false.
  */
 bool MPU_Calibrate(void);
-
 /* ============================================================
  * Advanced Device Context
  * ============================================================ */
-
 /**
  * @brief MPU6050 device context.
  *
@@ -243,35 +212,27 @@ bool MPU_Calibrate(void);
 typedef struct
 {
     uint8_t i2cAddress;
-
     MPU6050_AccelRange_t accelRange;
     MPU6050_GyroRange_t gyroRange;
-
     /* Latest converted measurements */
     float accelX;
     float accelY;
     float accelZ;
-
     float gyroX;
     float gyroY;
     float gyroZ;
-
     float temperature;
-
     /* Calibration offsets */
     float accelOffsetX;
     float accelOffsetY;
     float accelOffsetZ;
-
     float gyroOffsetX;
     float gyroOffsetY;
     float gyroOffsetZ;
 } MPU6050_t;
-
 /* ============================================================
  * Advanced API - Initialization and Configuration
  * ============================================================ */
-
 /**
  * @brief Initialize an MPU6050 device instance.
  *
@@ -291,7 +252,6 @@ typedef struct
  * @return true if initialization succeeds; otherwise false.
  */
 bool MPU6050_begin(MPU6050_t *mpu, uint8_t address);
-
 /**
  * @brief Configure the accelerometer measurement range.
  *
@@ -301,10 +261,7 @@ bool MPU6050_begin(MPU6050_t *mpu, uint8_t address);
  * @return true if the configuration is written successfully;
  * otherwise false.
  */
-bool MPU6050_setAccelerometerRange(
-    MPU6050_t *mpu,
-    MPU6050_AccelRange_t range);
-
+bool MPU6050_setAccelerometerRange(MPU6050_t *mpu, MPU6050_AccelRange_t range);
 /**
  * @brief Configure the gyroscope measurement range.
  *
@@ -314,14 +271,10 @@ bool MPU6050_setAccelerometerRange(
  * @return true if the configuration is written successfully;
  * otherwise false.
  */
-bool MPU6050_setGyroRange(
-    MPU6050_t *mpu,
-    MPU6050_GyroRange_t range);
-
+bool MPU6050_setGyroRange(MPU6050_t *mpu, MPU6050_GyroRange_t range);
 /* ============================================================
  * Advanced API - Measurement and Calibration
  * ============================================================ */
-
 /**
  * @brief Read the latest sensor measurements.
  *
@@ -344,7 +297,6 @@ bool MPU6050_setGyroRange(
  * otherwise false.
  */
 bool MPU6050_read(MPU6050_t *mpu);
-
 /**
  * @brief Calibrate accelerometer and gyroscope zero-bias offsets.
  *
@@ -362,61 +314,50 @@ bool MPU6050_read(MPU6050_t *mpu);
  * @return true if all calibration samples are read successfully;
  * otherwise false.
  */
-bool MPU6050_calibrate(
-    MPU6050_t *mpu,
-    uint16_t iterations);
-
+bool MPU6050_calibrate(MPU6050_t *mpu, uint16_t iterations);
 /* ============================================================
  * Advanced API - Measurement Getters
  * ============================================================ */
-
 /**
  * @brief Get acceleration along the X axis.
  *
  * @return Acceleration in g.
  */
 float MPU6050_getAccelerationX(const MPU6050_t *mpu);
-
 /**
  * @brief Get acceleration along the Y axis.
  *
  * @return Acceleration in g.
  */
 float MPU6050_getAccelerationY(const MPU6050_t *mpu);
-
 /**
  * @brief Get acceleration along the Z axis.
  *
  * @return Acceleration in g.
  */
 float MPU6050_getAccelerationZ(const MPU6050_t *mpu);
-
 /**
  * @brief Get angular velocity around the X axis.
  *
  * @return Angular velocity in degrees per second.
  */
 float MPU6050_getGyroX(const MPU6050_t *mpu);
-
 /**
  * @brief Get angular velocity around the Y axis.
  *
  * @return Angular velocity in degrees per second.
  */
 float MPU6050_getGyroY(const MPU6050_t *mpu);
-
 /**
  * @brief Get angular velocity around the Z axis.
  *
  * @return Angular velocity in degrees per second.
  */
 float MPU6050_getGyroZ(const MPU6050_t *mpu);
-
 /**
  * @brief Get the latest measured sensor temperature.
  *
  * @return Internal sensor temperature in Celsius.
  */
 float MPU6050_getTemperature(const MPU6050_t *mpu);
-
 #endif /* MPU6050_H */
